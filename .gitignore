@@ -1,0 +1,52 @@
+# 依赖目录
+node_modules/
+
+# 日志文件
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 环境变量文件
+.env
+.env.local
+.env.*.local
+
+# 编译输出目录（如果使用 TypeScript 等）
+dist/
+build/
+lib/
+out/
+
+# 临时文件
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# 操作系统生成文件
+.DS_Store
+Thumbs.db
+
+# IDE 配置文件（个人偏好，建议保留团队统一配置）
+.vscode/
+.idea/
+*.iml
+
+# 测试覆盖率报告
+coverage/
+.nyc_output/
+
+# 打包文件（如果直接发布压缩包）
+*.tgz
+*.tar.gz
+
+# 插件特定临时数据（如有）
+.cache/
+.temp/
+
+.workbuddy/
+.verify/
+.smoke/

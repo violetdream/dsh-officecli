@@ -1,0 +1,8 @@
+- insert:
+    - id: dsh-officecli
+      name: dsh-officecli
+      config:
+        officecliPath: officecli
+        watchPort: 0
+        commandTimeoutMs: 30000
+        batchTimeoutMs: 60000

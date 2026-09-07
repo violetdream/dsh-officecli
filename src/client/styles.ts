@@ -1,0 +1,110 @@
+import { useMemo } from 'react'
+
+export const styles = {
+  panel: {
+    position: 'fixed' as const,
+    right: 0,
+    top: 60,
+    bottom: 0,
+    width: 'calc(100% - 64px)',
+    maxWidth: 480,
+    backgroundColor: 'var(--dsh-bg-secondary, #1a1a2e)',
+    borderLeft: '1px solid var(--dsh-border, #2d2d44)',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    zIndex: 1000,
+    color: 'var(--dsh-fg-primary, #e0e0e0)',
+  },
+  panelRail: {
+    width: 'calc(100% - 60px)',
+    right: 60,
+  },
+  header: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '12px 16px',
+    borderBottom: '1px solid var(--dsh-border, #2d2d44)',
+    fontSize: '14px',
+    fontWeight: 600,
+  },
+  headerButtons: {
+    display: 'flex',
+    gap: '8px',
+  },
+  iconButton: {
+    background: 'none',
+    border: 'none',
+    color: 'var(--dsh-fg-secondary, #9ca3af)',
+    cursor: 'pointer',
+    padding: '4px',
+    borderRadius: '4px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '16px',
+  },
+  iconButtonHover: {
+    color: 'var(--dsh-fg-primary, #e0e0e0)',
+    backgroundColor: 'var(--dsh-bg-hover, #2d2d44)',
+  },
+  fileList: {
+    flexShrink: 0,
+    borderBottom: '1px solid var(--dsh-border, #2d2d44)',
+  },
+  fileListEmpty: {
+    padding: '16px',
+    textAlign: 'center' as const,
+    color: 'var(--dsh-fg-secondary, #9ca3af)',
+    fontSize: '13px',
+  },
+  fileItem: {
+    padding: '10px 16px',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    fontSize: '13px',
+    transition: 'background 0.15s',
+  },
+  fileItemHover: {
+    backgroundColor: 'var(--dsh-bg-hover, #2d2d44)',
+  },
+  fileItemActive: {
+    backgroundColor: 'var(--dsh-bg-active, #3d3d5c)',
+    color: 'var(--dsh-accent, #6366f1)',
+  },
+  fileIcon: {
+    fontSize: '14px',
+    opacity: 0.8,
+  },
+  fileMeta: {
+    marginLeft: 'auto',
+    fontSize: '11px',
+    color: 'var(--dsh-fg-tertiary, #6b7280)',
+  },
+  fileUpdated: {
+    animation: 'dshOfficecliFlash 1.2s ease-out',
+  },
+  sessionBar: {
+    padding: '6px 16px',
+    fontSize: '11px',
+    color: 'var(--dsh-fg-tertiary, #6b7280)',
+    borderBottom: '1px solid var(--dsh-border, #2d2d44)',
+  },
+  iframe: {
+    flex: 1,
+    border: 'none',
+    backgroundColor: '#fff',
+  },
+  error: {
+    padding: '16px',
+    color: 'var(--dsh-error, #ef4444)',
+    fontSize: '13px',
+  },
+  loading: {
+    padding: '16px',
+    color: 'var(--dsh-fg-secondary, #9ca3af)',
+    fontSize: '13px',
+  },
+} as const
