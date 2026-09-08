@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import { styles } from './styles.ts'
 
@@ -27,6 +27,11 @@ export function PreviewPanel({ ctx, onClose, wide }: { ctx: ClientContext; onClo
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [updated, setUpdated] = useState<Set<string>>(new Set())
+  // 边改边看：Agent 正在运行哪个 office_* 工具（忙碌指示）；每文件的生成详情（页数等）
+  const [busy, setBusy] = useState<string | null>(null)
+  const [detail, setDetail] = useState<Record<string, { pageCount?: number; layouts?: string[]; template?: string }>>({})
+  // 当前选中文件的实时引用：SSE 回调里判断「是否已在预览」，避免抢走用户正在看的文件
+  const selectedRef = useRef<string | null>(null)
 
   const panelStyle = useMemo(() => ({ ...(wide ? styles.panel : { ...styles.panel, ...styles.panelRail }) }), [wide])
 
@@ -34,9 +39,12 @@ export function PreviewPanel({ ctx, onClose, wide }: { ctx: ClientContext; onClo
   useEffect(() => {
     setFiles([])
     setSelectedFile(null)
+    selectedRef.current = null
     setIframeUrl(null)
     setLoading(true)
     setError(null)
+    setBusy(null)
+    setDetail({})
   }, [sessionId])
 
   // 拉取文件列表
@@ -65,23 +73,45 @@ export function PreviewPanel({ ctx, onClose, wide }: { ctx: ClientContext; onClo
     const es = new EventSource(`/api/officecli/events?session=${encodeURIComponent(sessionId)}`)
     es.onmessage = (ev) => {
       try {
-        const event = JSON.parse(ev.data) as { type: string; files?: SessionFile[]; file?: string; tool?: string }
+        const event = JSON.parse(ev.data) as {
+          type: string
+          files?: SessionFile[]
+          file?: string
+          tool?: string
+          state?: 'running' | 'done' | 'failed'
+          detail?: { pageCount?: number; layouts?: string[]; template?: string }
+        }
         if (event.type === 'files-changed' && event.files) {
           setFiles(event.files)
         } else if (event.type === 'file-updated' && event.file) {
           const name = event.file
           setUpdated((prev) => new Set(prev).add(name))
           window.setTimeout(() => setUpdated((prev) => { const next = new Set(prev); next.delete(name); return next }), 1200)
+          if (event.detail) {
+            setDetail((prev) => ({ ...prev, [name]: event.detail ?? {} }))
+          }
+          // 边改边看：生成类工具（带页数详情）无条件打开预览；其他编辑仅在
+          // 当前没在看任何文件时自动打开，绝不抢走用户正在预览的文件
+          if (event.detail?.pageCount !== undefined || selectedRef.current === null) {
+            void selectFile(name)
+          }
+        } else if (event.type === 'tool-state' && event.state && event.tool) {
+          if (event.state === 'running') setBusy(event.tool)
+          else if (event.state === 'done' || event.state === 'failed') setBusy((prev) => (prev === event.tool ? null : prev))
+        } else if (event.type === 'watch-started' && event.file) {
+          if (selectedRef.current === null) void selectFile(event.file)
         }
       } catch { /* 忽略心跳等非 JSON 帧 */ }
     }
     es.onerror = () => es.close()
     return () => es.close()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
   // 选中文件：向宿主申请 watch 会话（拿到预览 URL）
   const selectFile = async (name: string) => {
     if (!sessionId) return
+    selectedRef.current = name
     setSelectedFile(name)
     setError(null)
     try {
@@ -104,6 +134,7 @@ export function PreviewPanel({ ctx, onClose, wide }: { ctx: ClientContext; onClo
   return (
     <div style={panelStyle}>
       <style>{'@keyframes dshOfficecliFlash { from { background: rgba(99,102,241,0.35) } to { background: transparent } }'}</style>
+      <style>{'@keyframes dshBusyPulse { 0%,100% { opacity: 1 } 50% { opacity: 0.25 } }'}</style>
       <div style={styles.header}>
         <span>📄 Office 预览</span>
         <div style={styles.headerButtons}>
@@ -112,6 +143,12 @@ export function PreviewPanel({ ctx, onClose, wide }: { ctx: ClientContext; onClo
         </div>
       </div>
       <div style={styles.sessionBar}>{sessionId ? `会话 ${sessionId.slice(0, 20)}…` : '未连接到会话'}</div>
+      {busy ? (
+        <div style={styles.busy}>
+          <span style={styles.busyDot} />
+          Agent 正在运行 {busy} …
+        </div>
+      ) : null}
       <div style={styles.fileList}>
         {loading ? (
           <div style={styles.fileListEmpty}>加载中...</div>
@@ -123,6 +160,9 @@ export function PreviewPanel({ ctx, onClose, wide }: { ctx: ClientContext; onClo
           files.map((f) => {
             const isActive = selectedFile === f.name
             const isUpdated = updated.has(f.name)
+            const d = detail[f.name]
+            const badge = d?.pageCount !== undefined ? `${d.pageCount} 页` : ''
+            const tpl = d?.template ? ` · ${d.template}` : ''
             return (
               <div
                 key={f.name}
@@ -136,7 +176,7 @@ export function PreviewPanel({ ctx, onClose, wide }: { ctx: ClientContext; onClo
               >
                 <span style={styles.fileIcon}>{TYPE_ICON[f.type]}</span>
                 <span>{f.name}</span>
-                <span style={styles.fileMeta}>{formatSize(f.size)} · {formatTime(f.mtime)}</span>
+                <span style={styles.fileMeta}>{badge || tpl ? `${badge}${tpl} · ` : ''}{formatSize(f.size)} · {formatTime(f.mtime)}</span>
               </div>
             )
           })

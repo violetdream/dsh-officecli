@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { OfficeCLIService } from '../service.js'
-import { cliError, getSessionId, notify, requireFile, textCard, truncate } from './common.js'
+import { cliError, getSessionCwd, getSessionId, notify, requireFile, textCard, truncate, warmWatch } from './common.js'
 import type { PluginDeps } from '../routes.js'
 
 /** office_set / office_add / office_remove / office_move / office_batch */
@@ -34,7 +34,8 @@ export function registerEditTools(ctx: Context, deps: PluginDeps): void {
       isConcurrencySafe: () => false,
       async execute(args, exec) {
         const sessionId = getSessionId(exec)
-        const abs = requireFile(deps.workspace, sessionId, args.filename)
+        const cwd = getSessionCwd(exec)
+        const abs = requireFile(deps.workspace, sessionId, args.filename, cwd)
         const res = await deps.cli.run(sessionId, [
           'set',
           abs,
@@ -42,7 +43,8 @@ export function registerEditTools(ctx: Context, deps: PluginDeps): void {
           ...OfficeCLIService.propArgs(args.props),
         ])
         if (!res.ok) throw cliError(res)
-        notify(deps, sessionId, { file: args.filename, tool: 'office_set' })
+        notify(deps, sessionId, { file: args.filename, tool: 'office_set' }, cwd)
+        warmWatch(deps, sessionId, args.filename, cwd)
         return { applied: args.props }
       },
     }),
@@ -82,13 +84,15 @@ export function registerEditTools(ctx: Context, deps: PluginDeps): void {
       isConcurrencySafe: () => false,
       async execute(args, exec) {
         const sessionId = getSessionId(exec)
-        const abs = requireFile(deps.workspace, sessionId, args.filename)
+        const cwd = getSessionCwd(exec)
+        const abs = requireFile(deps.workspace, sessionId, args.filename, cwd)
         const cliArgs = ['add', abs, args.parent, '--type', args.type, ...OfficeCLIService.propArgs(args.props)]
         if (args.after) cliArgs.push('--after', args.after)
         if (args.before) cliArgs.push('--before', args.before)
         const res = await deps.cli.run<unknown>(sessionId, cliArgs)
         if (!res.ok) throw cliError(res)
-        notify(deps, sessionId, { file: args.filename, tool: 'office_add' })
+        notify(deps, sessionId, { file: args.filename, tool: 'office_add' }, cwd)
+        warmWatch(deps, sessionId, args.filename, cwd)
         // officecli 成功消息形如 "Added paragraph at /body/p[@paraId=...]"
         const raw = typeof res.data === 'string' ? res.data : JSON.stringify(res.data)
         const m = raw.match(/at\s+(\S+)/)
@@ -112,10 +116,12 @@ export function registerEditTools(ctx: Context, deps: PluginDeps): void {
       isConcurrencySafe: () => false,
       async execute(args, exec) {
         const sessionId = getSessionId(exec)
-        const abs = requireFile(deps.workspace, sessionId, args.filename)
+        const cwd = getSessionCwd(exec)
+        const abs = requireFile(deps.workspace, sessionId, args.filename, cwd)
         const res = await deps.cli.run(sessionId, ['remove', abs, args.path])
         if (!res.ok) throw cliError(res)
-        notify(deps, sessionId, { file: args.filename, tool: 'office_remove' })
+        notify(deps, sessionId, { file: args.filename, tool: 'office_remove' }, cwd)
+        warmWatch(deps, sessionId, args.filename, cwd)
         return { removed: args.path }
       },
     }),
@@ -137,10 +143,12 @@ export function registerEditTools(ctx: Context, deps: PluginDeps): void {
       isConcurrencySafe: () => false,
       async execute(args, exec) {
         const sessionId = getSessionId(exec)
-        const abs = requireFile(deps.workspace, sessionId, args.filename)
+        const cwd = getSessionCwd(exec)
+        const abs = requireFile(deps.workspace, sessionId, args.filename, cwd)
         const res = await deps.cli.run(sessionId, ['move', abs, args.path, '--to', args.to])
         if (!res.ok) throw cliError(res)
-        notify(deps, sessionId, { file: args.filename, tool: 'office_move' })
+        notify(deps, sessionId, { file: args.filename, tool: 'office_move' }, cwd)
+        warmWatch(deps, sessionId, args.filename, cwd)
         return { moved: args.path, to: args.to }
       },
     }),
@@ -171,13 +179,15 @@ export function registerEditTools(ctx: Context, deps: PluginDeps): void {
       isConcurrencySafe: () => false,
       async execute(args, exec) {
         const sessionId = getSessionId(exec)
-        const abs = requireFile(deps.workspace, sessionId, args.filename)
+        const cwd = getSessionCwd(exec)
+        const abs = requireFile(deps.workspace, sessionId, args.filename, cwd)
         const res = await deps.cli.run(sessionId, ['batch', abs], {
           timeoutMs: deps.config.batchTimeoutMs,
           stdin: JSON.stringify(args.commands),
         })
         if (!res.ok) throw cliError(res)
-        notify(deps, sessionId, { file: args.filename, tool: 'office_batch' })
+        notify(deps, sessionId, { file: args.filename, tool: 'office_batch' }, cwd)
+        warmWatch(deps, sessionId, args.filename, cwd)
         return { applied: args.commands.length }
       },
     }),

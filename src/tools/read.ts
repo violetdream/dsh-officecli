@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-tools'
-import { cliError, getSessionId, requireFile, textCard, truncate } from './common.js'
+import { cliError, getSessionCwd, getSessionId, requireFile, textCard, truncate } from './common.js'
 import type { PluginDeps } from '../routes.js'
 
 /** 把 officecli view 各模式的 data 结构转成可读文本。 */
@@ -45,7 +45,8 @@ export function registerReadTools(ctx: Context, deps: PluginDeps): void {
       isConcurrencySafe: () => true,
       async execute(args, exec) {
         const sessionId = getSessionId(exec)
-        const abs = requireFile(deps.workspace, sessionId, args.filename)
+        const cwd = getSessionCwd(exec)
+        const abs = requireFile(deps.workspace, sessionId, args.filename, cwd)
         const cliArgs = ['view', abs, args.mode]
         if (args.page !== undefined) cliArgs.push('--page', String(args.page))
         if (args.range) cliArgs.push('--range', args.range)
@@ -73,7 +74,8 @@ export function registerReadTools(ctx: Context, deps: PluginDeps): void {
       isConcurrencySafe: () => true,
       async execute(args, exec) {
         const sessionId = getSessionId(exec)
-        const abs = requireFile(deps.workspace, sessionId, args.filename)
+        const cwd = getSessionCwd(exec)
+        const abs = requireFile(deps.workspace, sessionId, args.filename, cwd)
         const cliArgs = ['get', abs]
         if (args.path) cliArgs.push(args.path)
         if (args.depth !== undefined) cliArgs.push('--depth', String(args.depth))
@@ -99,7 +101,8 @@ export function registerReadTools(ctx: Context, deps: PluginDeps): void {
       isConcurrencySafe: () => true,
       async execute(args, exec) {
         const sessionId = getSessionId(exec)
-        const abs = requireFile(deps.workspace, sessionId, args.filename)
+        const cwd = getSessionCwd(exec)
+        const abs = requireFile(deps.workspace, sessionId, args.filename, cwd)
         const res = await deps.cli.run(sessionId, ['query', abs, args.selector])
         if (!res.ok) throw cliError(res)
         return { data: res.data as JsonValue }
@@ -122,7 +125,8 @@ export function registerReadTools(ctx: Context, deps: PluginDeps): void {
       isConcurrencySafe: () => true,
       async execute(args, exec) {
         const sessionId = getSessionId(exec)
-        const abs = requireFile(deps.workspace, sessionId, args.filename)
+        const cwd = getSessionCwd(exec)
+        const abs = requireFile(deps.workspace, sessionId, args.filename, cwd)
         const cliArgs = ['dump', abs]
         if (args.path) cliArgs.push(args.path)
         const res = await deps.cli.run(sessionId, cliArgs)

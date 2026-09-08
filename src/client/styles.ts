@@ -92,6 +92,23 @@ export const styles = {
     color: 'var(--dsh-fg-tertiary, #6b7280)',
     borderBottom: '1px solid var(--dsh-border, #2d2d44)',
   },
+  busy: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '4px 12px',
+    fontSize: '11px',
+    color: 'var(--dsh-accent, #6366f1)',
+    backgroundColor: 'var(--dsh-bg-hover, #2d2d44)',
+    borderBottom: '1px solid var(--dsh-border, #2d2d44)',
+  },
+  busyDot: {
+    width: 8,
+    height: 8,
+    borderRadius: '50%',
+    backgroundColor: 'var(--dsh-accent, #6366f1)',
+    animation: 'dshBusyPulse 1s ease-in-out infinite',
+  },
   iframe: {
     flex: 1,
     border: 'none',

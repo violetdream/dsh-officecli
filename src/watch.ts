@@ -40,6 +40,16 @@ export class WatchManager {
     return this.start(session, file)
   }
 
+  /**
+   * 会话尚无 watch 进程时启动并指向 file；已有进程则**不切换**（返回其端口，
+   * 避免工具预热抢走用户正在预览的文件）。用于「边改边看」的主动预热。
+   */
+  async warmIfAbsent(session: string, file: string): Promise<number | undefined> {
+    const existing = this.handles.get(session)
+    if (existing) return existing.port
+    return this.start(session, file)
+  }
+
   private async start(session: string, file: string): Promise<number> {
     const child = spawn(this.config.officecliPath, ['watch', file, '--port', String(this.config.watchPort)], {
       shell: false,

@@ -1,6 +1,7 @@
 import { FONT } from './grid.js'
 import { DECK_SPEC_HELP } from './deck.js'
 import { THEMES } from './theme.js'
+import { TEMPLATES } from './templates.js'
 
 /**
  * 交给模型的设计约束与自检清单。
@@ -16,8 +17,9 @@ export const LENGTH_LIMITS = `【字数红线】超出会在幻灯片里溢出�
   cover.subtitle   ≤ 40 字
   cover.eyebrow    ≤ 12 字（如"2026 年度规划"）
   section.title    ≤ 16 字
-  bullets.items[].title   ≤ 22 字
-  bullets.items[].desc    ≤ 46 字
+  bullets.items[].title   ≤ 22 字（columns:2 两栏 ≤ 18 字）
+  bullets.items[].desc    ≤ 46 字（columns:2 两栏 ≤ 34 字）
+  bullets.items           ≤ 6 条（columns:2 两栏 ≤ 8 条）
   cards.cards[].title     ≤ 12 字
   cards.cards[].desc      ≤ 60 字（2-3 张卡可放宽到 80）
   kpi.metrics[].value     ≤ 6 字符（如 "3.2x"、"92%"、"1.8亿"）
@@ -29,7 +31,16 @@ export const LENGTH_LIMITS = `【字数红线】超出会在幻灯片里溢出�
   timeline.events[].desc  ≤ 40 字
   quote.quote       ≤ 70 字
   table.headers[]   ≤ 8 字/列，列数 ≤ 5
-  table.rows        行数 ≤ 8`
+  table.rows        行数 ≤ 8
+  agenda.items[].title    ≤ 14 字
+  agenda.items[].desc     ≤ 40 字
+  swot 每象限 ≤ 4 条，每条 ≤ 18 字
+  pricing.plans[]         ≤ 4 个方案
+  pricing.features[]      ≤ 5 条/方案，每条 ≤ 12 字
+  pricing.price           ≤ 8 字符（如 "¥9,900/年"）
+  roadmap.phases[].phase  ≤ 6 字（阶段标签，如 "阶段一"）
+  roadmap.phases[].title  ≤ 12 字
+  roadmap.phases[].desc   ≤ 36 字`
 
 /** 叙事结构建议。 */
 export const STORY_GUIDE = `【叙事结构】一份 7-10 页的汇报推荐节奏：
@@ -43,7 +54,11 @@ export const STORY_GUIDE = `【叙事结构】一份 7-10 页的汇报推荐节�
   8. quote      客户/用户原话（可选）
   9. table      明细数据（可选）
   10. ending    致谢
-节奏原则：不要连续两页同为 cards 或同为 bullets；深色整幅页（cover/section/ending）之间至少隔一页浅色内容页。`
+节奏原则：不要连续两页同为 cards 或同为 bullets；深色整幅页（cover/section/ending）之间至少隔一页浅色内容页。
+整份 PPT 用 deck.template 一键换「专业感外衣」（见 templates 节），不必逐页手工加装饰。
+【信息密度】每页都要信息充足，宁可一页讲透也不要半页空转：
+  书稿/长文总结场景：每章 2-3 个内容页，用 bullets 两栏（columns:2，1-8 条）或 cards（4-6 张）承载；
+  section 页是章节锚点，不要连续用，也不要用它凑页数；content 页占整份的 70% 以上。`
 
 /** 生成后的视觉自检清单，供 office_screenshot 拿到图后逐条核对。 */
 export const VISUAL_CHECKLIST = `【视觉自检清单】拿到截图后逐条核对，任一条不通过就用 office_batch 修正，最多改 3 轮：
@@ -64,11 +79,18 @@ export const TYPE_SCALE = `【字号阶梯】模板已按此固定，无需自�
 
 /** 主题清单。 */
 export function themeCatalog(): string {
-  return `【主题】用 deck.theme 指定：\n` + THEMES.map((t) => `  ${t.id.padEnd(16)} ${t.name}`).join('\n')
+  return `【主题】用 deck.theme 指定（缺省随模板或 business-blue）：\n` + THEMES.map((t) => `  ${t.id.padEnd(16)} ${t.name}`).join('\n')
+}
+
+/** 模板清单。 */
+export function templateCatalog(): string {
+  return `【模板】用 deck.template 指定，一键获得「专业感外衣」（主题基调 + 内容页装饰 + 页码格式 + 默认转场）：\n` +
+    TEMPLATES.map((t) => `  ${t.id.padEnd(20)} ${t.name} — ${t.description}`).join('\n') +
+    `\n模板与版式正交：换模板不动版式，换版式不动模板；deck.theme 可覆盖模板默认主题。`
 }
 
 /** office_design_guide 可单独索取的节。 */
-export type GuideSection = 'themes' | 'story' | 'limits' | 'scale' | 'spec' | 'checklist'
+export type GuideSection = 'templates' | 'themes' | 'story' | 'limits' | 'scale' | 'spec' | 'checklist'
 
 /**
  * 按节返回指南片段。
@@ -78,6 +100,7 @@ export type GuideSection = 'themes' | 'story' | 'limits' | 'scale' | 'spec' | 'c
  */
 export function guideSections(): Record<GuideSection, string> {
   return {
+    templates: templateCatalog(),
     themes: themeCatalog(),
     story: STORY_GUIDE,
     limits: LENGTH_LIMITS,
@@ -93,6 +116,8 @@ export function designGuide(section?: GuideSection): string {
   if (section !== undefined) return sections[section]
   return [
     '# PPT 设计指南',
+    '',
+    sections.templates,
     '',
     sections.themes,
     '',

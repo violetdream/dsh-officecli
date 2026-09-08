@@ -75,6 +75,52 @@ export interface ShapeOp {
   valign?: 'top' | 'middle' | 'bottom'
   /** OOXML 预设形状名，如 roundRect / ellipse / rightArrow。缺省为 rect。 */
   geometry?: string
+
+  // ---------------------------------------------------------------------------
+  // 增强样式（officecli 1.0.x 实测支持的 --prop 面）
+  // ---------------------------------------------------------------------------
+  /** 渐变填充：`C1-C2[-ANGLE]`（角度为度，如 `-90` / `135`）。与 fill 二选一。 */
+  gradient?: string
+  /** 图案填充：`preset[:fg[:bg]]`，如 `diagBrick:FF0000:FFFFFF`。 */
+  pattern?: string
+  /** 填充不透明度 0–1（需配合 fill / gradient / pattern 使用）。 */
+  opacity?: number
+  /** 描边宽度（pt），与 line 的宽度段等价但可独立设置。 */
+  lineWidth?: number
+  /** 描边虚线：solid/dot/dash/dashDot/lgDash 等。 */
+  lineDash?: string
+  /** 线端样式：round/flat/square。 */
+  lineCap?: string
+  /** 拐角样式：round/bevel/miter。 */
+  lineJoin?: string
+  /** 复合线型：sng/dbl/thickThin/thinThick/tri。 */
+  cmpd?: string
+  /** 起点箭头：triangle/stealth/diamond/oval/arrow。 */
+  headEnd?: string
+  /** 终点箭头：triangle/stealth/diamond/oval/arrow。 */
+  tailEnd?: string
+  /** 文字字形填充（作用于字形本身，与 color 二选一；渐变/图案亦可用）。 */
+  textFill?: string
+  /** 文字高亮背景色，6 位 hex 不带 `#`。 */
+  highlight?: string
+  /** 大小写渲染：all（全大写）/ small（小型大写）。 */
+  cap?: 'all' | 'small' | 'none'
+  /** 字距（pt），负值收紧。 */
+  spacing?: number
+  /** 删除线：single/double。 */
+  strike?: 'single' | 'double'
+  /** 列表样式：bullet/numbered/alpha/roman/none/<char>。 */
+  list?: string
+  /** 点击跳转目标：绝对 URI / `slide[N]` / 命名动作。 */
+  link?: string
+  /** 悬浮提示（需与 link 同批设置）。 */
+  tooltip?: string
+  /** 段落前间距（pt）。 */
+  spaceBefore?: number
+  /** 段落后间距（pt）。 */
+  spaceAfter?: number
+  /** 形状文字方向：horizontal/vertical90/vertical270/stacked。 */
+  textDirection?: string
   /**
    * 形状调节点，格式 `<guide名>:<值>`，如 `adj:4000`（取值 0–50000）。
    * guide 名由形状决定：roundRect 是 `adj`，多调节量形状才用 `adj1/adj2…`。
@@ -139,6 +185,28 @@ export function toProps(op: ShapeOp): Record<string, string> {
   if (op.lineSpacing !== undefined) p.lineSpacing = String(op.lineSpacing)
   if (op.margin !== undefined) p.margin = pt(op.margin)
   if (op.autoFit) p.autoFit = op.autoFit
+  // 增强样式
+  if (op.gradient !== undefined) p.gradient = op.gradient
+  if (op.pattern !== undefined) p.pattern = op.pattern
+  if (op.opacity !== undefined) p.opacity = String(op.opacity)
+  if (op.lineWidth !== undefined) p.lineWidth = pt(op.lineWidth)
+  if (op.lineDash !== undefined) p.lineDash = op.lineDash
+  if (op.lineCap !== undefined) p.lineCap = op.lineCap
+  if (op.lineJoin !== undefined) p.lineJoin = op.lineJoin
+  if (op.cmpd !== undefined) p.cmpd = op.cmpd
+  if (op.headEnd !== undefined) p.headEnd = op.headEnd
+  if (op.tailEnd !== undefined) p.tailEnd = op.tailEnd
+  if (op.textFill !== undefined) p.textFill = op.textFill
+  if (op.highlight !== undefined) p.highlight = op.highlight
+  if (op.cap !== undefined && op.cap !== 'none') p.cap = op.cap
+  if (op.spacing !== undefined) p.spacing = String(op.spacing)
+  if (op.strike !== undefined) p.strike = op.strike
+  if (op.list !== undefined) p.list = op.list
+  if (op.link !== undefined) p.link = op.link
+  if (op.tooltip !== undefined) p.tooltip = op.tooltip
+  if (op.spaceBefore !== undefined) p.spaceBefore = pt(op.spaceBefore)
+  if (op.spaceAfter !== undefined) p.spaceAfter = pt(op.spaceAfter)
+  if (op.textDirection !== undefined) p.textDirection = op.textDirection
   return p
 }
 
@@ -187,12 +255,16 @@ export function pageTitle(
   ]
 }
 
-/** C 区页脚：左侧说明 + 右侧页码。 */
+/**
+ * C 区页脚：左侧说明 + 右侧页码。
+ * @param right - 右侧页码文字；null 表示不显示页码（如「无页码」模板）。
+ */
 export function pageFooter(
   name: string,
   left: string,
   pageNo: number,
   theme: { muted: string; fontBody: { latin: string; ea: string } },
+  right: string | null = String(pageNo),
 ): ShapeOp[] {
   const size = 11
   const common = {
@@ -203,7 +275,7 @@ export function pageFooter(
     valign: 'middle' as const,
     margin: TEXT_MARGIN,
   }
-  return [
+  const out: ShapeOp[] = [
     {
       name: `${name}-foot-l`,
       text: left,
@@ -214,15 +286,18 @@ export function pageFooter(
       align: 'left' as const,
       ...common,
     },
-    {
+  ]
+  if (right !== null) {
+    out.push({
       name: `${name}-foot-r`,
-      text: String(pageNo),
+      text: right,
       x: 732,
       y: 500,
       w: 196,
-      h: textHeight(String(pageNo), size, 196),
+      h: textHeight(right, size, 196),
       align: 'right' as const,
       ...common,
-    },
-  ]
+    })
+  }
+  return out
 }

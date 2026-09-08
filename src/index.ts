@@ -51,6 +51,32 @@ export function apply(ctx: Context, config: Config): void {
   })
   registerTools(ctx, deps)
 
+  // 边改边看：挂钩 DSH 工具执行事件（tools/execute 是 around-dispatch 包装，
+  // tools/result 是只读最终结果），把 office_* 工具的运行状态广播给预览面板。
+  // 相比工具内部手动 notify，这里能覆盖失败与取消路径，且不侵入每个工具。
+  ctx.on('tools/execute', async (exec, next) => {
+    if (exec.name.startsWith('office_')) {
+      const sessionId = typeof exec.agent?.session.id === 'string' ? exec.agent.session.id : undefined
+      if (sessionId) {
+        events.broadcast(sessionId, { type: 'tool-state', session: sessionId, tool: exec.name, state: 'running' })
+      }
+    }
+    return next()
+  })
+  ctx.on('tools/result', (exec, result) => {
+    if (exec.name.startsWith('office_')) {
+      const sessionId = typeof exec.agent?.session.id === 'string' ? exec.agent.session.id : undefined
+      if (sessionId) {
+        events.broadcast(sessionId, {
+          type: 'tool-state',
+          session: sessionId,
+          tool: exec.name,
+          state: result.isError ? 'failed' : 'done',
+        })
+      }
+    }
+  })
+
   // 启动自检：探测 officecli 可用性，失败只告警不阻塞
   void cli.probe().then(
     (version) => ctx.logger.info(`dsh-officecli: officecli ${version} 就绪`),

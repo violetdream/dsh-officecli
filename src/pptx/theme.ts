@@ -27,6 +27,19 @@ export interface Theme {
   text: string
   /** 弱化文字（页脚、说明）。 */
   muted: string
+  /** 第二点缀色（小标签、次级强调，≤5%）。 */
+  accent5: string
+  /** 第三点缀色（警示/反差色，≤3%）。 */
+  accent6: string
+  /** 超链接色。 */
+  hyperlink: string
+  /**
+   * hero 页（cover/section/ending）渐变底：`C1-C2[-ANGLE]`（officecli 的
+   * `slide background` 渐变语法）。缺省由 primary 向深色 25% 生成 135° 渐变。
+   */
+  heroGradient?: string
+  /** hero 页装饰风格。 */
+  coverDecor: 'circles' | 'grid' | 'band' | 'none'
   /** 标题字体：latin 走西文，ea 走中文。 */
   fontTitle: { latin: string; ea: string }
   /** 正文字体。 */
@@ -45,6 +58,11 @@ export const THEMES: readonly Theme[] = [
     accent: 'F59E0B',
     text: '1A1A1A',
     muted: '6B7280',
+    accent5: '2563EB',
+    accent6: '475569',
+    hyperlink: '1D4ED8',
+    heroGradient: '1F6FEB-0E5AC8-135',
+    coverDecor: 'circles',
     fontTitle: { latin: 'Segoe UI', ea: '微软雅黑' },
     fontBody: { latin: 'Segoe UI', ea: '微软雅黑' },
   },
@@ -58,6 +76,11 @@ export const THEMES: readonly Theme[] = [
     accent: 'D4AF37',
     text: '3F4A55',
     muted: '7A828B',
+    accent5: '6D1515',
+    accent6: 'B45309',
+    hyperlink: '7F1D1D',
+    heroGradient: '8B1A1A-5F0F0F-135',
+    coverDecor: 'none',
     fontTitle: { latin: 'Georgia', ea: '宋体' },
     fontBody: { latin: 'Georgia', ea: '等线' },
   },
@@ -71,6 +94,11 @@ export const THEMES: readonly Theme[] = [
     accent: 'A78BFA',
     text: 'F1F5F9',
     muted: '94A3B8',
+    accent5: '60A5FA',
+    accent6: 'F472B6',
+    hyperlink: '93C5FD',
+    heroGradient: '0F172A-1E3A8A-135',
+    coverDecor: 'grid',
     fontTitle: { latin: 'Segoe UI', ea: '微软雅黑' },
     fontBody: { latin: 'Segoe UI', ea: '等线' },
   },
@@ -84,6 +112,11 @@ export const THEMES: readonly Theme[] = [
     accent: '0D9488',
     text: '1A1A1A',
     muted: '78716C',
+    accent5: 'C2410C',
+    accent6: '047857',
+    hyperlink: 'B45309',
+    heroGradient: 'EA580C-BF4A0B-135',
+    coverDecor: 'band',
     fontTitle: { latin: 'Segoe UI', ea: '微软雅黑' },
     fontBody: { latin: 'Segoe UI', ea: '微软雅黑' },
   },
@@ -97,8 +130,67 @@ export const THEMES: readonly Theme[] = [
     accent: '8B1A1A',
     text: '1A1A1A',
     muted: '5A5A5A',
+    accent5: 'A00E24',
+    accent6: '7F1D1D',
+    hyperlink: '8B0F22',
+    heroGradient: 'C8102E-8B0F22-135',
+    coverDecor: 'none',
     fontTitle: { latin: 'Times New Roman', ea: '黑体' },
     fontBody: { latin: 'Times New Roman', ea: '宋体' },
+  },
+  {
+    id: 'minimal-gray',
+    name: '极简灰（设计提案、策略思考）',
+    dark: false,
+    bg: 'FFFFFF',
+    primary: '1F2937',
+    secondary: '4B5563',
+    accent: '111827',
+    text: '111827',
+    muted: '9CA3AF',
+    accent5: '374151',
+    accent6: '6B7280',
+    hyperlink: '1F2937',
+    heroGradient: '111827-374151-135',
+    coverDecor: 'none',
+    fontTitle: { latin: 'Segoe UI', ea: '微软雅黑' },
+    fontBody: { latin: 'Segoe UI', ea: '微软雅黑' },
+  },
+  {
+    id: 'nature-green',
+    name: '自然绿（ESG、农业、健康）',
+    dark: false,
+    bg: 'F6F8F4',
+    primary: '166534',
+    secondary: '65A30D',
+    accent: '0F766E',
+    text: '1C1917',
+    muted: '78716C',
+    accent5: '15803D',
+    accent6: 'A16207',
+    hyperlink: '14532D',
+    heroGradient: '166534-0E4F26-135',
+    coverDecor: 'band',
+    fontTitle: { latin: 'Segoe UI', ea: '微软雅黑' },
+    fontBody: { latin: 'Segoe UI', ea: '微软雅黑' },
+  },
+  {
+    id: 'luxury-black',
+    name: '奢华黑金（年度报告、高端发布）',
+    dark: true,
+    bg: '0B0B0F',
+    primary: '1C1C22',
+    secondary: '2A2A33',
+    accent: 'D4AF37',
+    text: 'F5F5F4',
+    muted: '8A8A93',
+    accent5: 'B8912F',
+    accent6: '6B7280',
+    hyperlink: 'D4AF37',
+    heroGradient: '0B0B0F-1C1C22-135',
+    coverDecor: 'circles',
+    fontTitle: { latin: 'Segoe UI', ea: '微软雅黑' },
+    fontBody: { latin: 'Segoe UI', ea: '微软雅黑' },
   },
 ]
 
@@ -164,6 +256,10 @@ export function inferTheme(format: Record<string, unknown> | undefined): Theme |
     accent: color('accent3') ?? primary,
     text: color('dk1') ?? '1A1A1A',
     muted: color('accent4') ?? color('dk2') ?? '6B7280',
+    accent5: color('accent5') ?? color('dk2') ?? primary,
+    accent6: color('accent6') ?? color('dk2') ?? primary,
+    hyperlink: color('hyperlink') ?? primary,
+    coverDecor: 'none',
     fontTitle: { latin: font('major.latin') ?? 'Segoe UI', ea: font('major.eastAsia') ?? '微软雅黑' },
     fontBody: { latin: font('minor.latin') ?? 'Segoe UI', ea: font('minor.eastAsia') ?? '微软雅黑' },
   }
@@ -205,6 +301,15 @@ export function hairlineOf(theme: Theme): string {
 }
 
 /**
+ * hero 页渐变底。优先主题声明的 heroGradient，缺省由 primary 向深色 25%
+ * 生成 135° 线性渐变（officecli slide background 的 `C1-C2-ANGLE` 语法）。
+ */
+export function heroBackground(theme: Theme): string {
+  if (theme.heroGradient) return theme.heroGradient
+  return `${theme.primary}-${tint(theme.primary, theme.dark ? -0.18 : -0.25)}-135`
+}
+
+/**
  * 把主题编译成 officecli 的 `set <file> / --prop ...` 属性表。
  * 落到 PPT 的 theme part 上，之后所有沿用主题色的形状会自动继承。
  */
@@ -217,6 +322,9 @@ export function themeToProps(theme: Theme): Record<string, string> {
     'theme.color.accent2': theme.secondary,
     'theme.color.accent3': theme.accent,
     'theme.color.accent4': theme.muted,
+    'theme.color.accent5': theme.accent5,
+    'theme.color.accent6': theme.accent6,
+    'theme.color.hyperlink': theme.hyperlink,
     'theme.font.major.latin': theme.fontTitle.latin,
     'theme.font.major.eastAsia': theme.fontTitle.ea,
     'theme.font.minor.latin': theme.fontBody.latin,

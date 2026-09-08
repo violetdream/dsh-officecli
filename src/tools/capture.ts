@@ -3,7 +3,7 @@ import { defineTool, type JsonValue, type ToolRunContext } from '@deepseek-ai/ds
 import { mkdirSync, readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import type { ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
-import { cliError, getSessionId, notify, requireFile, textCard } from './common.js'
+import { cliError, getSessionCwd, getSessionId, notify, requireFile, textCard } from './common.js'
 import type { PluginDeps } from '../routes.js'
 import { VISUAL_CHECKLIST } from '../pptx/checklist.js'
 
@@ -101,14 +101,15 @@ export function registerCaptureTools(ctx: Context, deps: PluginDeps): void {
       isConcurrencySafe: () => false,
       async execute(args, exec): Promise<Record<string, JsonValue>> {
         const sessionId = getSessionId(exec)
-        const abs = requireFile(deps.workspace, sessionId, args.filename)
+        const cwd = getSessionCwd(exec)
+        const abs = requireFile(deps.workspace, sessionId, args.filename, cwd)
         const snapsDir = join(deps.workspace.sessionDir(sessionId), '.snaps')
         mkdirSync(snapsDir, { recursive: true })
         const page = args.page !== undefined ? Math.max(1, Math.floor(args.page)) : 1
         const out = join(snapsDir, `p${page}-${Date.now()}.png`)
         const res = await deps.cli.run(sessionId, ['view', abs, 'screenshot', '-o', out, '--page', String(page)])
         if (!res.ok) throw cliError(res)
-        notify(deps, sessionId, { file: args.filename, tool: 'office_screenshot' })
+        notify(deps, sessionId, { file: args.filename, tool: 'office_screenshot' }, cwd)
 
         // 读回字节并交给 attachments 服务持久化
         let data: Buffer

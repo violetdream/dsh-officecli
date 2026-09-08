@@ -1,6 +1,8 @@
 import { BODY, CANVAS_H, CANVAS_W, CONTENT_W, FONT, MARGIN, estimateLines, tint } from './grid.js'
 import type { Theme } from './theme.js'
-import { hairlineOf, onPrimary, onPrimaryMuted, surfaceOf } from './theme.js'
+import { hairlineOf, heroBackground, onPrimary, onPrimaryMuted, surfaceOf } from './theme.js'
+import type { DeckTemplate } from './templates.js'
+import { contentDecorShapes, formatPageNumber } from './templates.js'
 import type { ShapeOp } from './shape.js'
 import { TEXT_MARGIN, bgShape, fitSize, pageFooter, pageTitle, roundRectAdj, textHeight } from './shape.js'
 
@@ -26,6 +28,11 @@ import { TEXT_MARGIN, bgShape, fitSize, pageFooter, pageTitle, roundRectAdj, tex
 /** 单个版式产出的形状集合。 */
 export interface LayoutResult {
   shapes: ShapeOp[]
+  /**
+   * 页面背景（officecli `set /slide[N] background=` 的语法：色值或渐变）。
+   * 存在时 deck 层不再添加铺底矩形（用原生背景 + 装饰形状更干净）。
+   */
+  background?: string
   /** 表格版式需要走 `add --type table`，不能走 shape。 */
   table?: { x: number; y: number; w: number; h: number; headers: string[]; rows: string[][] }
 }
@@ -57,19 +64,39 @@ export interface TimelineEvent {
   title: string
   desc?: string
 }
+export interface AgendaItem {
+  title: string
+  desc?: string
+}
+export interface PlanItem {
+  name: string
+  price: string
+  tag?: string
+  features: string[]
+  highlight?: boolean
+}
+export interface RoadmapPhase {
+  phase: string
+  title: string
+  desc?: string
+}
 
 export type SlideSpec =
-  | { layout: 'cover'; eyebrow?: string; title: string; subtitle?: string; meta?: string }
-  | { layout: 'section'; number?: string; title: string; subtitle?: string }
-  | { layout: 'bullets'; title: string; items: BulletItem[] }
-  | { layout: 'cards'; title: string; cards: CardItem[]; columns?: number }
-  | { layout: 'kpi'; title: string; metrics: MetricItem[] }
-  | { layout: 'steps'; title: string; steps: BulletItem[] }
-  | { layout: 'compare'; title: string; left: CompareSide; right: CompareSide }
-  | { layout: 'timeline'; title: string; events: TimelineEvent[] }
-  | { layout: 'quote'; quote: string; author?: string; role?: string }
-  | { layout: 'table'; title: string; headers: string[]; rows: string[][] }
-  | { layout: 'ending'; title?: string; subtitle?: string }
+  | { layout: 'cover'; eyebrow?: string; title: string; subtitle?: string; meta?: string; transition?: string; background?: string; hidden?: boolean }
+  | { layout: 'section'; number?: string; title: string; subtitle?: string; transition?: string; background?: string; hidden?: boolean }
+  | { layout: 'bullets'; title: string; items: BulletItem[]; columns?: 2; transition?: string; background?: string; hidden?: boolean }
+  | { layout: 'cards'; title: string; cards: CardItem[]; columns?: number; transition?: string; background?: string; hidden?: boolean }
+  | { layout: 'kpi'; title: string; metrics: MetricItem[]; transition?: string; background?: string; hidden?: boolean }
+  | { layout: 'steps'; title: string; steps: BulletItem[]; transition?: string; background?: string; hidden?: boolean }
+  | { layout: 'compare'; title: string; left: CompareSide; right: CompareSide; transition?: string; background?: string; hidden?: boolean }
+  | { layout: 'timeline'; title: string; events: TimelineEvent[]; transition?: string; background?: string; hidden?: boolean }
+  | { layout: 'quote'; quote: string; author?: string; role?: string; transition?: string; background?: string; hidden?: boolean }
+  | { layout: 'table'; title: string; headers: string[]; rows: string[][]; transition?: string; background?: string; hidden?: boolean }
+  | { layout: 'ending'; title?: string; subtitle?: string; transition?: string; background?: string; hidden?: boolean }
+  | { layout: 'agenda'; title: string; items: AgendaItem[]; number?: string; transition?: string; background?: string; hidden?: boolean }
+  | { layout: 'swot'; title: string; s: string[]; w: string[]; o: string[]; t: string[]; transition?: string; background?: string; hidden?: boolean }
+  | { layout: 'pricing'; title: string; plans: PlanItem[]; transition?: string; background?: string; hidden?: boolean }
+  | { layout: 'roadmap'; title: string; phases: RoadmapPhase[]; transition?: string; background?: string; hidden?: boolean }
 
 export const LAYOUT_IDS = [
   'cover',
@@ -83,6 +110,10 @@ export const LAYOUT_IDS = [
   'quote',
   'table',
   'ending',
+  'agenda',
+  'swot',
+  'pricing',
+  'roadmap',
 ] as const
 
 export type LayoutId = (typeof LAYOUT_IDS)[number]
@@ -104,6 +135,92 @@ const fgMuted = (t: Theme) => onPrimaryMuted(t)
 const decorTint = (t: Theme, amount: number) =>
   t.dark ? tint(t.primary, -amount) : tint(t.primary, amount)
 
+/**
+ * hero 页（cover/section/ending）装饰形状，按主题 coverDecor 生成。
+ * 背景本身由 slide background 渐变承担，这些装饰只做「点缀」。
+ */
+function heroDecor(p: string, t: Theme): ShapeOp[] {
+  switch (t.coverDecor) {
+    case 'circles':
+      return [
+        {
+          name: `${p}-decor1`,
+          x: 700,
+          y: 268,
+          w: 460,
+          h: 460,
+          geometry: 'ellipse',
+          fill: decorTint(t, 0.16),
+          line: 'none',
+        },
+        {
+          name: `${p}-decor2`,
+          x: 852,
+          y: -56,
+          w: 220,
+          h: 220,
+          geometry: 'ellipse',
+          fill: decorTint(t, 0.24),
+          line: 'none',
+        },
+      ]
+    case 'grid': {
+      // 右下角 4×3 点阵，形成「科技感」的弱纹理
+      const out: ShapeOp[] = []
+      const size = 10
+      const gapX = 34
+      const gapY = 30
+      const baseX = 760
+      const baseY = 386
+      for (let r = 0; r < 3; r++) {
+        for (let c = 0; c < 4; c++) {
+          const k = r * 4 + c
+          out.push({
+            name: `${p}-decor-g${k}`,
+            x: baseX + c * gapX,
+            y: baseY + r * gapY,
+            w: size,
+            h: size,
+            geometry: 'ellipse',
+            fill: decorTint(t, r === 1 && c === 2 ? 0.5 : 0.22),
+            line: 'none',
+          })
+        }
+      }
+      return out
+    }
+    case 'band': {
+      // 底部斜切色带，增强「活动感」
+      return [
+        {
+          name: `${p}-decor-band`,
+          x: -40,
+          y: 428,
+          w: 1040,
+          h: 120,
+          geometry: 'roundRect',
+          adj: roundRectAdj(0),
+          fill: decorTint(t, 0.2),
+          line: 'none',
+        },
+        {
+          name: `${p}-decor-band2`,
+          x: -40,
+          y: 468,
+          w: 1040,
+          h: 84,
+          geometry: 'roundRect',
+          adj: roundRectAdj(0),
+          fill: decorTint(t, 0.3),
+          line: 'none',
+        },
+      ]
+    }
+    case 'none':
+      return []
+  }
+}
+
 /** 按内容块实际高度做垂直居中。 */
 const centerBlock = (blockH: number) => Math.max(24, Math.round((0 + CANVAS_H) / 2 - blockH / 2))
 
@@ -124,29 +241,8 @@ function cover(s: Extract<SlideSpec, { layout: 'cover' }>, t: Theme, p: string):
   const blockH = eyebrowH + titleH + 30 + subH + metaH
   let y = centerBlock(blockH)
 
-  const shapes: ShapeOp[] = [
-    bgShape(`${p}-bg`, t.primary),
-    {
-      name: `${p}-decor1`,
-      x: 700,
-      y: 268,
-      w: 460,
-      h: 460,
-      geometry: 'ellipse',
-      fill: decorTint(t, 0.16),
-      line: 'none',
-    },
-    {
-      name: `${p}-decor2`,
-      x: 852,
-      y: -56,
-      w: 220,
-      h: 220,
-      geometry: 'ellipse',
-      fill: decorTint(t, 0.24),
-      line: 'none',
-    },
-  ]
+  // hero 页用原生渐变背景，铺底矩形交给 slide background；装饰按主题风格生成
+  const shapes: ShapeOp[] = [...heroDecor(p, t)]
 
   if (s.eyebrow) {
     shapes.push({
@@ -223,7 +319,7 @@ function cover(s: Extract<SlideSpec, { layout: 'cover' }>, t: Theme, p: string):
       margin: TEXT_MARGIN,
     })
   }
-  return { shapes }
+  return { shapes, background: heroBackground(t) }
 }
 
 function section(s: Extract<SlideSpec, { layout: 'section' }>, t: Theme, p: string): LayoutResult {
@@ -234,9 +330,8 @@ function section(s: Extract<SlideSpec, { layout: 'section' }>, t: Theme, p: stri
   const blockH = numH + titleH + 30 + subH
   let y = centerBlock(blockH)
 
-  const shapes: ShapeOp[] = [bgShape(`${p}-bg`, t.primary)]
-  if (s.number) {
-    shapes.push({
+  const shapes: ShapeOp[] = [...heroDecor(p, t)]
+  if (s.number) {    shapes.push({
       name: `${p}-num`,
       text: s.number,
       x: 64,
@@ -291,79 +386,96 @@ function section(s: Extract<SlideSpec, { layout: 'section' }>, t: Theme, p: stri
       margin: TEXT_MARGIN,
     })
   }
-  return { shapes }
+  return { shapes, background: heroBackground(t) }
 }
 
+/**
+ * 要点列表。单栏：1–6 条、宽松；两栏（columns: 2）：1–8 条、紧凑，
+ * 适合书稿/长文等「信息密度要求高」的页面 —— 每栏 4 行，标题 15pt + 说明 12pt。
+ */
 function bullets(s: Extract<SlideSpec, { layout: 'bullets' }>, t: Theme, p: string): LayoutResult {
-  const items = s.items.slice(0, 6)
+  const twoCol = s.columns === 2
+  const items = s.items.slice(0, twoCol ? 8 : 6)
   const n = Math.max(items.length, 1)
   const availH = BODY.bottom - BODY.top
-  const rowH = availH / n
+  const gap = 20
+  const colCount = twoCol ? 2 : 1
+  const colW = (CONTENT_W - (colCount - 1) * gap) / colCount
+  const badge = twoCol ? 26 : BADGE
+  const titleSize = twoCol ? 15 : FONT.cardTitle
+  const descSize = twoCol ? FONT.body - 4 : FONT.body - 2
   const shapes: ShapeOp[] = [bgShape(`${p}-bg`, t.bg), ...pageTitle(p, s.title, t)]
-  const textX = MARGIN + BADGE + 14
-  const textW = CONTENT_W - BADGE - 14
 
-  items.forEach((it, i) => {
-    const rowY = BODY.top + i * rowH
-    const hasDesc = Boolean(it.desc)
-    const titleH = textHeight(it.title, FONT.cardTitle, textW)
-    const descH = hasDesc ? Math.max(rowH - titleH - 8, 24) : 0
-    const titleY = hasDesc ? rowY : rowY + (rowH - titleH) / 2
-    shapes.push(
-      {
-        name: `${p}-b${i}-num`,
-        text: String(i + 1),
-        x: MARGIN,
-        y: rowY + (rowH - BADGE) / 2,
-        w: BADGE,
-        h: BADGE,
-        geometry: 'ellipse',
-        fill: t.primary,
-        line: 'none',
-        size: 12,
-        bold: true,
-        color: fg(t),
-        align: 'center',
-        valign: 'middle',
-        margin: 0,
-      },
-      {
-        name: `${p}-b${i}-t`,
-        text: it.title,
-        x: textX,
-        y: titleY,
-        w: textW,
-        h: titleH,
-        size: FONT.cardTitle,
-        bold: true,
-        color: t.text,
-        fontLatin: t.fontTitle.latin,
-        fontEa: t.fontTitle.ea,
-        align: 'left',
-        valign: 'middle',
-        margin: TEXT_MARGIN,
-      },
-    )
-    if (hasDesc) {
-      const size = fitSize(it.desc!, FONT.body - 2, textW, descH, TEXT_MARGIN, 9, 1.35)
-      shapes.push({
-        name: `${p}-b${i}-d`,
-        text: it.desc,
-        x: textX,
-        y: rowY + titleH + 8,
-        w: textW,
-        h: descH,
-        size,
-        color: t.muted,
-        fontLatin: t.fontBody.latin,
-        fontEa: t.fontBody.ea,
-        align: 'left',
-        valign: 'top',
-        lineSpacing: 1.35,
-        margin: TEXT_MARGIN,
-      })
-    }
-  })
+  for (let c = 0; c < colCount; c++) {
+    const colItems = items.slice(c * Math.ceil(n / colCount), (c + 1) * Math.ceil(n / colCount))
+    const m = Math.max(colItems.length, 1)
+    const rowH = availH / m
+    const colX = MARGIN + c * (colW + gap)
+    const textX = colX + badge + (twoCol ? 10 : 14)
+    const textW = colW - badge - (twoCol ? 10 : 14)
+    colItems.forEach((it, j) => {
+      const i = c * Math.ceil(n / colCount) + j
+      const rowY = BODY.top + j * rowH
+      const hasDesc = Boolean(it.desc)
+      const titleH = textHeight(it.title, titleSize, textW)
+      const descH = hasDesc ? Math.max(rowH - titleH - (twoCol ? 6 : 8), twoCol ? 20 : 24) : 0
+      const titleY = hasDesc ? rowY : rowY + (rowH - titleH) / 2
+      shapes.push(
+        {
+          name: `${p}-b${i}-num`,
+          text: String(i + 1),
+          x: colX,
+          y: rowY + (rowH - badge) / 2,
+          w: badge,
+          h: badge,
+          geometry: 'ellipse',
+          fill: t.primary,
+          line: 'none',
+          size: twoCol ? 10.5 : 12,
+          bold: true,
+          color: fg(t),
+          align: 'center',
+          valign: 'middle',
+          margin: 0,
+        },
+        {
+          name: `${p}-b${i}-t`,
+          text: it.title,
+          x: textX,
+          y: titleY,
+          w: textW,
+          h: titleH,
+          size: titleSize,
+          bold: true,
+          color: t.text,
+          fontLatin: t.fontTitle.latin,
+          fontEa: t.fontTitle.ea,
+          align: 'left',
+          valign: 'middle',
+          margin: TEXT_MARGIN,
+        },
+      )
+      if (hasDesc) {
+        const size = fitSize(it.desc!, descSize, textW, descH, TEXT_MARGIN, 9, 1.35)
+        shapes.push({
+          name: `${p}-b${i}-d`,
+          text: it.desc,
+          x: textX,
+          y: rowY + titleH + (twoCol ? 5 : 8),
+          w: textW,
+          h: descH,
+          size,
+          color: t.muted,
+          fontLatin: t.fontBody.latin,
+          fontEa: t.fontBody.ea,
+          align: 'left',
+          valign: 'top',
+          lineSpacing: 1.35,
+          margin: TEXT_MARGIN,
+        })
+      }
+    })
+  }
   return { shapes }
 }
 
@@ -630,7 +742,7 @@ function compare(s: Extract<SlideSpec, { layout: 'compare' }>, t: Theme, p: stri
   const shapes: ShapeOp[] = [bgShape(`${p}-bg`, t.bg), ...pageTitle(p, s.title, t)]
 
   const sides: { side: typeof s.left; idx: number; color: string }[] = [
-    { side: s.left, idx: 0, color: t.primary },
+    { side: s.left, idx: 0, color: t.dark ? t.text : t.primary },
     { side: s.right, idx: 1, color: t.secondary },
   ]
 
@@ -903,7 +1015,7 @@ function ending(s: Extract<SlideSpec, { layout: 'ending' }>, t: Theme, p: string
   let y = centerBlock(blockH)
 
   const shapes: ShapeOp[] = [
-    bgShape(`${p}-bg`, t.primary),
+    ...heroDecor(p, t),
     {
       name: `${p}-decor`,
       x: -110,
@@ -958,11 +1070,437 @@ function ending(s: Extract<SlideSpec, { layout: 'ending' }>, t: Theme, p: string
 // 分派
 // ---------------------------------------------------------------------------
 
+/** 目录页：编号芯片 + 标题 + 说明，适合汇报开篇交代结构。 */
+function agenda(s: Extract<SlideSpec, { layout: 'agenda' }>, t: Theme, p: string): LayoutResult {
+  const items = s.items.slice(0, 6)
+  const n = Math.max(items.length, 1)
+  const availH = BODY.bottom - BODY.top
+  const rowH = availH / n
+  const shapes: ShapeOp[] = [bgShape(`${p}-bg`, t.bg), ...pageTitle(p, s.title, t)]
+
+  items.forEach((it, i) => {
+    const rowY = BODY.top + i * rowH
+    const hasDesc = Boolean(it.desc)
+    const titleH = textHeight(it.title, FONT.cardTitle, 640)
+    const descH = hasDesc ? Math.max(rowH - titleH - 8, 20) : 0
+    const titleY = hasDesc ? rowY : rowY + (rowH - titleH) / 2
+    shapes.push(
+      {
+        name: `${p}-a${i}-num`,
+        text: String(i + 1).padStart(2, '0'),
+        x: MARGIN,
+        y: rowY + (rowH - 40) / 2,
+        w: 40,
+        h: 40,
+        geometry: 'roundRect',
+        adj: roundRectAdj(4000),
+        fill: i === 0 ? t.primary : surfaceOf(t),
+        line: 'none',
+        size: 16,
+        bold: true,
+        color: i === 0 ? fg(t) : t.dark ? t.text : t.primary,
+        align: 'center',
+        valign: 'middle',
+        margin: 0,
+      },
+      {
+        name: `${p}-a${i}-t`,
+        text: it.title,
+        x: MARGIN + 56,
+        y: titleY,
+        w: 640,
+        h: titleH,
+        size: FONT.cardTitle,
+        bold: true,
+        color: t.text,
+        fontLatin: t.fontTitle.latin,
+        fontEa: t.fontTitle.ea,
+        align: 'left',
+        valign: 'middle',
+        margin: TEXT_MARGIN,
+      },
+    )
+    if (hasDesc) {
+      shapes.push({
+        name: `${p}-a${i}-d`,
+        text: it.desc,
+        x: MARGIN + 56,
+        y: rowY + titleH + 4,
+        w: 700,
+        h: descH,
+        size: 13,
+        color: t.muted,
+        fontLatin: t.fontBody.latin,
+        fontEa: t.fontBody.ea,
+        align: 'left',
+        valign: 'top',
+        margin: TEXT_MARGIN,
+      })
+    }
+    if (i < n - 1) {
+      shapes.push({
+        name: `${p}-a${i}-line`,
+        x: MARGIN + 20,
+        y: rowY + rowH - 2,
+        w: CONTENT_W - 40,
+        h: 1,
+        fill: hairlineOf(t),
+        line: 'none',
+      })
+    }
+  })
+  return { shapes }
+}
+
+/** SWOT 2×2 矩阵：优势/劣势/机会/威胁四象限。 */
+function swot(s: Extract<SlideSpec, { layout: 'swot' }>, t: Theme, p: string): LayoutResult {
+  const quads: { key: 's' | 'w' | 'o' | 't'; label: string; color: string }[] = [
+    { key: 's', label: '优势 Strengths', color: t.dark ? t.text : t.primary },
+    { key: 'w', label: '劣势 Weaknesses', color: t.accent },
+    { key: 'o', label: '机会 Opportunities', color: t.secondary },
+    { key: 't', label: '威胁 Threats', color: t.dark ? t.muted : t.accent6 },
+  ]
+  const gap = 16
+  const innerW = (CONTENT_W - gap) / 2
+  const innerH = (BODY.bottom - BODY.top - gap) / 2
+  const headH = 34
+  const shapes: ShapeOp[] = [bgShape(`${p}-bg`, t.bg), ...pageTitle(p, s.title, t)]
+
+  quads.forEach((q, i) => {
+    const col = i % 2
+    const row = Math.floor(i / 2)
+    const x = MARGIN + col * (innerW + gap)
+    const y = BODY.top + row * (innerH + gap)
+    const items = ((s as unknown as Record<string, string[]>)[q.key] ?? []).slice(0, 4)
+    shapes.push(
+      {
+        name: `${p}-q${i}-bg`,
+        x,
+        y,
+        w: innerW,
+        h: innerH,
+        geometry: 'roundRect',
+        adj: roundRectAdj(2000),
+        fill: surfaceOf(t),
+        line: `${hairlineOf(t)}:1:solid`,
+      },
+      {
+        name: `${p}-q${i}-head`,
+        text: q.label,
+        x: x + 14,
+        y: y + 12,
+        w: innerW - 28,
+        h: headH,
+        size: 15,
+        bold: true,
+        color: q.color,
+        fontLatin: t.fontTitle.latin,
+        fontEa: t.fontTitle.ea,
+        align: 'left',
+        valign: 'middle',
+        margin: TEXT_MARGIN,
+      },
+    )
+    const listY = y + headH + 14
+    const rowH = (innerH - headH - 24) / Math.max(items.length, 1)
+    items.forEach((text, j) => {
+      const size = fitSize(text, 13, innerW - 52, rowH, TEXT_MARGIN, 9, 1.3)
+      shapes.push(
+        {
+          name: `${p}-q${i}-d${j}`,
+          x: x + 18,
+          y: listY + j * rowH + 4,
+          w: 7,
+          h: 7,
+          geometry: 'ellipse',
+          fill: q.color,
+          line: 'none',
+        },
+        {
+          name: `${p}-q${i}-t${j}`,
+          text,
+          x: x + 34,
+          y: listY + j * rowH,
+          w: innerW - 52,
+          h: rowH,
+          size,
+          color: t.text,
+          fontLatin: t.fontBody.latin,
+          fontEa: t.fontBody.ea,
+          align: 'left',
+          valign: 'top',
+          lineSpacing: 1.3,
+          margin: TEXT_MARGIN,
+        },
+      )
+    })
+  })
+  return { shapes }
+}
+
+/** 方案对比（定价）：2–4 张套餐卡，highlight 款主色描边强调。 */
+function pricing(s: Extract<SlideSpec, { layout: 'pricing' }>, t: Theme, p: string): LayoutResult {
+  const plans = s.plans.slice(0, 4)
+  const n = Math.max(plans.length, 1)
+  const gap = 16
+  const cardW = (CONTENT_W - (n - 1) * gap) / n
+  const top = BODY.top
+  const cardH = BODY.bottom - top
+  const pad = 18
+  const shapes: ShapeOp[] = [bgShape(`${p}-bg`, t.bg), ...pageTitle(p, s.title, t)]
+
+  plans.forEach((pl, i) => {
+    const x = MARGIN + i * (cardW + gap)
+    const hl = Boolean(pl.highlight)
+    shapes.push({
+      name: `${p}-pl${i}-bg`,
+      x,
+      y: top,
+      w: cardW,
+      h: cardH,
+      geometry: 'roundRect',
+      adj: roundRectAdj(3000),
+      fill: hl ? (t.dark ? tint(t.primary, -0.7) : tint(t.primary, 0.96)) : surfaceOf(t),
+      line: hl ? `${t.primary}:2:solid` : `${hairlineOf(t)}:1:solid`,
+    })
+    // 高亮款顶部渐变条（shape 级 gradient 注入：C1-C2-角度）
+    let cy = top + (hl ? 58 : 18)
+    if (hl) {
+      shapes.push(
+        {
+          name: `${p}-pl${i}-hlbar`,
+          x,
+          y: top,
+          w: cardW,
+          h: 44,
+          geometry: 'roundRect',
+          adj: roundRectAdj(3000),
+          gradient: `${t.primary}-${tint(t.primary, t.dark ? -0.35 : -0.2)}-90`,
+          line: 'none',
+        },
+        {
+          name: `${p}-pl${i}-hlbar-mask`,
+          x,
+          y: top + 32,
+          w: cardW,
+          h: 14,
+          fill: t.dark ? tint(t.primary, -0.7) : tint(t.primary, 0.96),
+          line: 'none',
+        },
+      )
+    }
+    if (pl.tag) {
+      shapes.push({
+        name: `${p}-pl${i}-tag`,
+        text: pl.tag,
+        x,
+        y: cy,
+        w: cardW,
+        h: 20,
+        size: 10.5,
+        bold: true,
+        color: t.accent,
+        fontLatin: t.fontBody.latin,
+        fontEa: t.fontBody.ea,
+        align: 'center',
+        valign: 'middle',
+        margin: 0,
+      })
+      cy += 22
+    }
+    const nameH = textHeight(pl.name, 16, cardW - pad * 2)
+    shapes.push({
+      name: `${p}-pl${i}-name`,
+      text: pl.name,
+      x: x + pad,
+      y: cy,
+      w: cardW - pad * 2,
+      h: nameH,
+      size: 16,
+      bold: true,
+      color: hl ? (t.dark ? t.accent : t.primary) : t.text,
+      fontLatin: t.fontTitle.latin,
+      fontEa: t.fontTitle.ea,
+      align: 'center',
+      valign: 'middle',
+      margin: TEXT_MARGIN,
+    })
+    cy += nameH + 4
+    const priceSize = fitSize(pl.price, 44, cardW - pad * 2, 60, 0, 26)
+    const priceH = textHeight(pl.price, priceSize, cardW - pad * 2, 0)
+    shapes.push({
+      name: `${p}-pl${i}-price`,
+      text: pl.price,
+      x: x + pad,
+      y: cy,
+      w: cardW - pad * 2,
+      h: priceH,
+      size: priceSize,
+      bold: true,
+      color: t.text,
+      fontLatin: t.fontTitle.latin,
+      fontEa: t.fontTitle.ea,
+      align: 'center',
+      valign: 'middle',
+      margin: 0,
+    })
+    cy += priceH + 10
+    shapes.push({
+      name: `${p}-pl${i}-sep`,
+      x: x + pad,
+      y: cy,
+      w: cardW - pad * 2,
+      h: 1,
+      fill: hairlineOf(t),
+      line: 'none',
+    })
+    cy += 10
+    const feats = pl.features.slice(0, 5)
+    const featH = (cardH - (cy - top) - 26) / Math.max(feats.length, 1)
+    feats.forEach((ft, j) => {
+      const size = fitSize(ft, 12, cardW - pad * 2 - 18, featH, TEXT_MARGIN, 8.5, 1.25)
+      shapes.push(
+        {
+          name: `${p}-pl${i}-f${j}-dot`,
+          x: x + pad + 2,
+          y: cy + 5,
+          w: 6,
+          h: 6,
+          geometry: 'ellipse',
+          fill: t.dark ? t.accent : t.primary,
+          line: 'none',
+        },
+        {
+          name: `${p}-pl${i}-f${j}-t`,
+          text: ft,
+          x: x + pad + 16,
+          y: cy,
+          w: cardW - pad * 2 - 18,
+          h: featH,
+          size,
+          color: t.text,
+          fontLatin: t.fontBody.latin,
+          fontEa: t.fontBody.ea,
+          align: 'left',
+          valign: 'top',
+          lineSpacing: 1.25,
+          margin: TEXT_MARGIN,
+        },
+      )
+      cy += featH
+    })
+  })
+  return { shapes }
+}
+
+/** 纵向路线图：阶段节点 + 标题 + 说明，适合规划、路线图、演进路径。 */
+function roadmap(s: Extract<SlideSpec, { layout: 'roadmap' }>, t: Theme, p: string): LayoutResult {
+  const phases = s.phases.slice(0, 5)
+  const n = Math.max(phases.length, 1)
+  const availH = BODY.bottom - BODY.top
+  const rowH = availH / n
+  const axisX = MARGIN + 36
+  const chipW = 72
+  const shapes: ShapeOp[] = [
+    bgShape(`${p}-bg`, t.bg),
+    ...pageTitle(p, s.title, t),
+    { name: `${p}-axis`, x: axisX + 1.5, y: BODY.top + 14, w: 3, h: availH - 28, fill: hairlineOf(t), line: 'none' },
+  ]
+
+  phases.forEach((ph, i) => {
+    const rowY = BODY.top + i * rowH
+    const cx = axisX + 3
+    shapes.push(
+      {
+        name: `${p}-r${i}-dot`,
+        x: cx - 10,
+        y: rowY + 8,
+        w: 24,
+        h: 24,
+        geometry: 'ellipse',
+        fill: i === n - 1 ? t.accent : t.primary,
+        line: 'none',
+      },
+      {
+        name: `${p}-r${i}-phase`,
+        text: ph.phase,
+        x: axisX + 30,
+        y: rowY + 4,
+        w: chipW,
+        h: 26,
+        geometry: 'roundRect',
+        adj: roundRectAdj(50000),
+        fill: t.primary,
+        line: 'none',
+        size: 11.5,
+        bold: true,
+        color: fg(t),
+        fontLatin: t.fontBody.latin,
+        fontEa: t.fontBody.ea,
+        align: 'center',
+        valign: 'middle',
+        margin: 2,
+      },
+    )
+    const textX = axisX + 30 + chipW + 12
+    const titleH = textHeight(ph.title, 16, 540)
+    shapes.push({
+      name: `${p}-r${i}-t`,
+      text: ph.title,
+      x: textX,
+      y: rowY + 6,
+      w: 540,
+      h: titleH,
+      size: 16,
+      bold: true,
+      color: t.text,
+      fontLatin: t.fontTitle.latin,
+      fontEa: t.fontTitle.ea,
+      align: 'left',
+      valign: 'top',
+      margin: TEXT_MARGIN,
+    })
+    if (ph.desc) {
+      const descH = Math.max(rowH - titleH - 14, 20)
+      const size = fitSize(ph.desc, 12.5, 680, descH, TEXT_MARGIN, 9, 1.35)
+      shapes.push({
+        name: `${p}-r${i}-d`,
+        text: ph.desc,
+        x: textX,
+        y: rowY + titleH + 6,
+        w: 680,
+        h: descH,
+        size,
+        color: t.muted,
+        fontLatin: t.fontBody.latin,
+        fontEa: t.fontBody.ea,
+        align: 'left',
+        valign: 'top',
+        lineSpacing: 1.35,
+        margin: TEXT_MARGIN,
+      })
+    }
+  })
+  return { shapes }
+}
+
+/** renderSlide 的上下文：总页数、页脚、页码格式与模板装饰。 */
+export interface RenderContext {
+  /** 总页数（页码格式 `{total}` 用）。 */
+  total?: number
+  /** 页脚左侧文字。 */
+  footerText?: string
+  /** 页码格式：true 纯数字、字符串模板、false 隐藏。缺省纯数字。 */
+  pageNumber?: boolean | string
+  /** 模板（提供内容页装饰）。 */
+  template?: DeckTemplate
+}
+
 /**
  * 渲染一页。`p` 是形状名前缀（形如 `s3`）—— officecli 的 `set` 靠 name 定位，
  * 跨页重名会让后续修正打错目标。
  */
-export function renderSlide(spec: SlideSpec, theme: Theme, pageNo: number): LayoutResult {
+export function renderSlide(spec: SlideSpec, theme: Theme, pageNo: number, ctx: RenderContext = {}): LayoutResult {
   const p = `s${pageNo}`
   const res = renderCore(spec, theme, p)
   const footed =
@@ -970,7 +1508,15 @@ export function renderSlide(spec: SlideSpec, theme: Theme, pageNo: number): Layo
     spec.layout === 'section' ||
     spec.layout === 'quote' ||
     spec.layout === 'ending'
-  if (!footed) res.shapes.push(...pageFooter(p, '', pageNo, theme))
+  if (!footed) {
+    const right = formatPageNumber(ctx.pageNumber, pageNo, ctx.total)
+    res.shapes.push(...pageFooter(p, ctx.footerText ?? '', pageNo, theme, right))
+  }
+  // 内容页模板装饰：插在 bg 之后、正文之前（形状按插入顺序叠放）
+  if (!footed) {
+    const decor = contentDecorShapes(p, ctx.template?.contentDecor, theme)
+    if (decor.length > 0) res.shapes.splice(1, 0, ...decor)
+  }
   return res
 }
 
@@ -998,6 +1544,14 @@ function renderCore(spec: SlideSpec, theme: Theme, p: string): LayoutResult {
       return table(spec, theme, p)
     case 'ending':
       return ending(spec, theme, p)
+    case 'agenda':
+      return agenda(spec, theme, p)
+    case 'swot':
+      return swot(spec, theme, p)
+    case 'pricing':
+      return pricing(spec, theme, p)
+    case 'roadmap':
+      return roadmap(spec, theme, p)
   }
 }
 

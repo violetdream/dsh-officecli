@@ -3,7 +3,16 @@ import type { SessionFile } from './workspace.js'
 
 export type OfficeEvent =
   | { type: 'files-changed'; session: string; files: SessionFile[] }
-  | { type: 'file-updated'; session: string; file: string; tool: string }
+  | {
+      type: 'file-updated'
+      session: string
+      file: string
+      tool: string
+      /** 生成结果详情（如 PPT 页数/版式/主题），供预览面板展示。 */
+      detail?: Record<string, unknown>
+    }
+  | { type: 'tool-state'; session: string; tool: string; state: 'running' | 'done' | 'failed' }
+  | { type: 'watch-started'; session: string; file: string; port: number }
 
 interface SseConnection {
   session: string

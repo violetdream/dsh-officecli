@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { existsSync } from 'node:fs'
-import { cliError, getSessionId, notify, textCard } from './common.js'
+import { cliError, getSessionCwd, getSessionId, notify, textCard, warmWatch } from './common.js'
 import type { PluginDeps } from '../routes.js'
 
 /** office_create / office_list */
@@ -27,11 +27,13 @@ export function registerCreateTools(ctx: Context, deps: PluginDeps): void {
       isConcurrencySafe: () => false,
       async execute(args, exec) {
         const sessionId = getSessionId(exec)
-        const abs = deps.workspace.resolve(sessionId, args.filename)
+        const cwd = getSessionCwd(exec)
+        const abs = deps.workspace.resolve(sessionId, args.filename, cwd)
         if (existsSync(abs)) throw new Error(`文件已存在: ${args.filename}。请换一个文件名。`)
         const res = await deps.cli.run(sessionId, ['create', abs, '--type', args.type])
         if (!res.ok) throw cliError(res)
-        notify(deps, sessionId, { file: args.filename, tool: 'office_create' })
+        notify(deps, sessionId, { file: args.filename, tool: 'office_create' }, cwd)
+        warmWatch(deps, sessionId, args.filename, cwd)
         const rootPath = args.type === 'docx' ? '/body' : args.type === 'xlsx' ? '/Sheet1' : '/slide[1]'
         return { filename: args.filename, type: args.type, rootPath }
       },
@@ -61,7 +63,8 @@ export function registerCreateTools(ctx: Context, deps: PluginDeps): void {
       isConcurrencySafe: () => true,
       async execute(_args, exec) {
         const sessionId = getSessionId(exec)
-        return { files: deps.workspace.listFiles(sessionId) }
+        const cwd = getSessionCwd(exec)
+        return { files: deps.workspace.listFiles(sessionId, cwd) }
       },
     }),
   )

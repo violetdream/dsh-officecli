@@ -49,13 +49,17 @@ OfficeCLI 是一个「没有布局引擎」的命令行工具——官方原话�
 | 特性 | 说明 |
 |---|---|
 | **15 个 AI 工具** | 12 个底层原语工具 + 3 个高层 PPT 工具，覆盖文档全生命周期 |
-| **PPT 设计层** | 960×540pt 画布、12 栏网格、8pt 基线、5 套主题、11 种版式模板；坐标与字号由插件计算 |
+| **PPT 设计层** | 960×540pt 画布、12 栏网格、8pt 基线、8 套主题、15 种版式模板、6 套专业模板；坐标与字号由插件计算 |
+| **模板库** | `deck.template` 一键套用专业感外衣（咨询简报/产品发布/学术答辩/极简/政务报告/年度报告），含内容页装饰、页码格式与默认转场 |
+| **样式协议** | `deck.style` 注入演示文稿元数据、默认转场、默认背景、`"{n} / {total}"` 页码格式；每页可单独覆盖背景/转场/隐藏 |
+| **--prop 富注入** | 形状级支持渐变/图案/不透明度/线宽线型/箭头/字距/高亮/大小写/列表/链接等 20+ 项 OfficeCLI 属性面 |
 | **字数红线** | 逐字段的字数上限随设计指南下发给模型，从源头抑制溢出 |
 | **视觉自检闭环** | `office_screenshot` 渲染 PNG 并**把图片回传到对话**，模型能真正看到自己的产出并修正 |
 | **主题继承** | `office_slide_add` 追加页面时自动还原原文件配色，不会突然换肤 |
 | **实时预览** | 侧边栏 iframe 嵌入 OfficeCLI watch 页面，Agent 编辑后内容自动刷新（不重载） |
-| **双通道 SSE** | 插件自有通道传元事件（文件增删改），OfficeCLI watch 通道传内容刷新 |
-| **会话隔离** | 每个对话会话独立工作区目录，文件互不干扰 |
+| **边改边看** | 挂钩 DSH 工具事件（`tools/execute` + `tools/result`），新生成/编辑的文件自动打开预览、面板显示 Agent 忙碌态与页数徽标 |
+| **双通道 SSE** | 插件自有通道传元事件（文件增删改 + 工具状态 + watch 状态），OfficeCLI watch 通道传内容刷新 |
+| **会话隔离** | 每个对话会话独立工作区；生成的文件直接落进 **DSH 会话工作区**（`exec.agent.session.cwd`），无 cwd 时回退 `workspaceDir`/系统临时目录 |
 | **安全执行** | `spawn` 参数数组执行，无 shell 拼接；文件名白名单校验防路径逃逸 |
 | **可选 HTTP** | 无 HTTP 的 profile（如 headless 一次性任务）下工具照常工作，只是没有侧边栏 |
 
@@ -250,7 +254,7 @@ curl -s -D - -o /dev/null "http://127.0.0.1:3080/api/officecli/zzz"
       name: dsh-officecli
       config:
         officecliPath: officecli     # 命令名，或绝对路径
-        workspaceDir: ""             # 留空 → 系统临时目录
+        workspaceDir: ""             # 兜底目录：会话无 cwd 时用；有会话 cwd 时自动写进 DSH 工作区
         watchPort: 0                 # 0 = OS 自动分配
         commandTimeoutMs: 30000      # 单条命令超时
         batchTimeoutMs: 60000        # batch 命令超时
@@ -259,7 +263,7 @@ curl -s -D - -o /dev/null "http://127.0.0.1:3080/api/officecli/zzz"
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `officecliPath` | string | `officecli` | 可执行文件。找不到时报错会提示本机常见安装位置 |
-| `workspaceDir` | string | `""` | 工作区根目录。**留空用系统临时目录；填了必须是绝对路径**——相对路径会让 officecli 在自身 cwd 下二次解析，拼出 `<sid>/<sid>/` 的重复层级 |
+| `workspaceDir` | string | `""` | **兜底**工作区根目录。目录优先级：DSH 会话 cwd（`exec.agent.session.cwd`，生成的文件直接落进用户工作区）→ 本字段（填了必须是绝对路径，否则相对路径会让 officecli 在自身 cwd 下二次解析，拼出 `<sid>/<sid>/` 的重复层级）→ 系统临时目录 |
 | `watchPort` | number | `0` | watch 服务器端口，`0` 表示由 OS 分配（推荐） |
 | `commandTimeoutMs` | number | `30000` | 单条 officecli 命令超时（毫秒） |
 | `batchTimeoutMs` | number | `60000` | batch 命令超时；`office_deck_create` 内部另用 120s |
@@ -295,8 +299,8 @@ curl -s -D - -o /dev/null "http://127.0.0.1:3080/api/officecli/zzz"
 
 | 工具 | 参数 | 说明 |
 |---|---|---|
-| `office_design_guide` | section? | 返回主题清单、叙事结构、字数红线、字号阶梯、DeckSpec 契约、视觉自检清单。`section` 可取 `themes` / `story` / `limits` / `scale` / `spec` / `checklist` |
-| `office_deck_create` | filename, deck, overwrite? | 一步生成整份 `.pptx`。`deck` 为 DeckSpec 对象（也容忍 JSON 字符串） |
+| `office_design_guide` | section? | 返回模板清单、主题清单、叙事结构、字数红线、字号阶梯、DeckSpec 契约、视觉自检清单。`section` 可取 `templates` / `themes` / `story` / `limits` / `scale` / `spec` / `checklist` |
+| `office_deck_create` | filename, deck, overwrite? | 一步生成整份 `.pptx`。`deck` 为 DeckSpec 对象（也容忍 JSON 字符串），支持 `template` / `style` / 单页样式覆盖 |
 | `office_slide_add` | filename, slides, at?, theme? | 往已有 PPT 追加页面，**默认自动沿用原文件配色** |
 
 ---
@@ -334,7 +338,7 @@ curl -s -D - -o /dev/null "http://127.0.0.1:3080/api/officecli/zzz"
 
 ### 10.3 主题
 
-5 套内置主题，字体一律取 Windows 必装项（避免 PPT 打开后回退成宋体）：
+8 套内置主题，字体一律取 Windows 必装项（避免 PPT 打开后回退成宋体）：
 
 | id | 名称 | 深色底 | 适用场景 |
 |---|---|---|---|
@@ -343,18 +347,21 @@ curl -s -D - -o /dev/null "http://127.0.0.1:3080/api/officecli/zzz"
 | `tech-cyan` | 科技青 | **是** | AI、芯片、数据 |
 | `warm-orange` | 暖橙 | 否 | 教育、消费、生活 |
 | `gov-red` | 政务红 | 否 | 党政、法律、正式公文 |
+| `minimal-gray` | 极简灰 | 否 | 设计提案、策略思考 |
+| `nature-green` | 自然绿 | 否 | ESG、农业、健康 |
+| `luxury-black` | 奢华黑金 | **是** | 年度报告、高端发布 |
 
-每套主题由 7 个色令牌（`bg` / `primary` / `secondary` / `accent` / `text` / `muted`）+ 2 组字体（标题/正文，各分 latin 与 eastAsia）构成。用色面积有约束：主色 ≤60%、辅色 ≤30%、强调色 ≤10%（hero 页可到 20%）。
+每套主题由 10 个色令牌（`bg` / `primary` / `secondary` / `accent` / `text` / `muted` / `accent5` / `accent6` / `hyperlink` / `heroGradient`）+ 2 组字体（标题/正文，各分 latin 与 eastAsia）构成。用色面积有约束：主色 ≤60%、辅色 ≤30%、强调色 ≤10%（hero 页可到 20%）。
 
 主题会通过 `themeToProps()` 编译成 `set / --prop theme.color.* --prop theme.font.*` 落到 PPT 的 theme part 上。
 
-### 10.4 版式模板（11 种）
+### 10.4 版式模板（15 种）
 
 | layout | 字段契约 |
 |---|---|
 | `cover` | `title`, `subtitle?`, `eyebrow?`, `meta?` |
 | `section` | `title`, `number?`, `subtitle?` |
-| `bullets` | `title`, `items:[{title, desc?}]`（1–6 条） |
+| `bullets` | `title`, `items:[{title, desc?}]`, `columns?`（1–6 条；`columns: 2` 两栏紧凑模式 1–8 条，书稿/长文推荐） |
 | `cards` | `title`, `cards:[{title, desc?, tag?}]`, `columns?`（1–6 张；≤3 用 n 列，4 用 2×2，更多 3 列） |
 | `kpi` | `title`, `metrics:[{value, label, note?}]`（1–4 个巨型数字） |
 | `steps` | `title`, `steps:[{title, desc?}]`（1–5 步） |
@@ -362,9 +369,28 @@ curl -s -D - -o /dev/null "http://127.0.0.1:3080/api/officecli/zzz"
 | `timeline` | `title`, `events:[{date, title, desc?}]`（1–5 个节点） |
 | `quote` | `quote`, `author?`, `role?` |
 | `table` | `title`, `headers:[]`, `rows:[[],[]]`（列 ≤5、行 ≤8） |
+| `agenda` | `title`, `items:[{title, desc?}]`（1–6 章节目录，编号芯片） |
+| `swot` | `title`, `s:[]`, `w:[]`, `o:[]`, `t:[]`（每象限 1–4 条，2×2 矩阵） |
+| `pricing` | `title`, `plans:[{name, price, tag?, features:[], highlight?}]`（1–4 个方案，高亮款渐变头部） |
+| `roadmap` | `title`, `phases:[{phase, title, desc?}]`（1–5 阶段，纵向路线图） |
 | `ending` | `title?`, `subtitle?`（默认「谢谢」） |
 
-`cover` / `section` / `quote` / `ending` 是整幅铺底的深色页，不带页脚。
+`cover` / `section` / `quote` / `ending` 是整幅铺底的深色页，不带页脚；hero 页背景用 **slide 原生渐变**（`set /slide[N] background=C1-C2-角度`），装饰形状按主题 `coverDecor` 生成（circles / grid / band / none）。
+
+### 10.4.1 模板库（6 套）
+
+模板 = 主题基调 + 内容页装饰 + 页码格式 + 默认转场，与版式正交：
+
+| id | 名称 | 主题 | 装饰 | 页码 | 转场 |
+|---|---|---|---|---|---|
+| `consulting` | 咨询简报 | business-blue | 左色轨 | `{n} / {total}` | fade |
+| `product-launch` | 产品发布 | tech-cyan | 右上角装饰圆 | 纯数字 | push |
+| `academic-defense` | 学术答辩 | academic-crimson | 无 | `{n} / {total}` | fade |
+| `minimal` | 极简 | minimal-gray | 无 | 隐藏 | fade |
+| `gov-report` | 政务报告 | gov-red | 顶部细条 | `{n} / {total}` | wipe |
+| `annual-report` | 年度报告 | luxury-black | 左色轨 | `{n} / {total}` | fade |
+
+在 `office_deck_create` 的 `deck.template` 指定；`deck.theme` 可覆盖模板默认主题；`deck.style`（元数据 / 默认转场 / 默认背景 / 页码格式 / 页脚）与单页 `transition` / `background` / `hidden` 逐级覆盖。
 
 ### 10.5 字数红线
 
@@ -373,12 +399,17 @@ curl -s -D - -o /dev/null "http://127.0.0.1:3080/api/officecli/zzz"
 ```
 cover.title            ≤ 18 字    cover.subtitle      ≤ 40 字
 cover.eyebrow          ≤ 12 字    section.title       ≤ 16 字
-bullets.items[].title  ≤ 22 字    bullets.items[].desc ≤ 46 字
+bullets.items[].title  ≤ 22 字（两栏 ≤ 18 字）    bullets.items[].desc ≤ 46 字（两栏 ≤ 34 字）
+bullets.items           ≤ 6 条（columns:2 两栏 ≤ 8 条）
 cards.cards[].title    ≤ 12 字    cards.cards[].desc   ≤ 60 字
 kpi.metrics[].value    ≤ 6 字符   kpi.metrics[].label  ≤ 10 字
 steps.steps[].title    ≤ 10 字    steps.steps[].desc   ≤ 34 字
 compare.*.points[]     ≤ 30 字/条 timeline.events[].title ≤ 12 字
 quote.quote            ≤ 70 字    table.headers[]      ≤ 8 字/列
+agenda.items[].title   ≤ 14 字    agenda.items[].desc  ≤ 40 字
+swot 每象限            ≤ 4 条     swot 每条            ≤ 18 字
+pricing.plans          ≤ 4 个     pricing.features[]   ≤ 5 条/方案、≤ 12 字/条
+roadmap.phases[].phase ≤ 6 字     roadmap.phases[].title ≤ 12 字、desc ≤ 36 字
 ```
 
 ### 10.6 视觉自检清单
@@ -437,10 +468,11 @@ textHeight(text, size, width) = ceil(lines × size × 1.35 × lineSpacing + 6 + 
 │  │  tools/                     pptx/（设计层）           基础设施                 │    │
 │  │  ├ create.ts  创建/列表     ├ grid.ts   画布网格      ├ workspace.ts 会话隔离 │    │
 │  │  ├ read.ts    读取/查询     ├ theme.ts  主题令牌      ├ service.ts  安全执行  │    │
-│  │  ├ edit.ts    编辑/批量     ├ layouts.ts 11 种版式    ├ watch.ts    子进程     │    │
-│  │  ├ capture.ts 截图回看      ├ shape.ts  形状 IR       ├ events.ts   SSE 通道   │    │
-│  │  └ deck.ts    高层 PPT      ├ deck.ts   DeckSpec 编译 ├ proxy.ts    HTTP 代理  │    │
-│  │                             └ checklist.ts 设计约束   └ routes.ts   路由分发   │    │
+│  │  ├ edit.ts    编辑/批量     ├ layouts.ts 15 种版式    ├ watch.ts    子进程     │    │
+│  │  ├ capture.ts 截图回看      ├ templates.ts 6 套模板   ├ events.ts   SSE 通道   │    │
+│  │  └ deck.ts    高层 PPT      ├ shape.ts  形状 IR       ├ proxy.ts    HTTP 代理  │    │
+│  │                             ├ deck.ts   DeckSpec 编译 ├ routes.ts   路由分发   │    │
+│  │                             └ checklist.ts 设计约束   └ index.ts    DSH 事件挂钩│    │
 │  └───────────────────────────────────────────────────────────────────────────────┘    │
 │                                                                                        │
 │  ┌────────────────────────── 客户端半（React）────────────────────────────────────┐    │
@@ -498,8 +530,22 @@ textHeight(text, size, width) = ceil(lines × size × 1.35 × lineSpacing + 6 + 
 ```
 GET /api/officecli/events?session=<sid>
   → 立即推 { type:'files-changed', files:[...] }（当前快照）
-  → 之后每次工具写文件推 { type:'file-updated', file, tool }
+  → 之后每次工具写文件推 { type:'file-updated', file, tool, detail? }
+     （detail 携带 PPT 页数/版式/主题/模板，面板显示页数徽标并自动打开预览）
+  → 工具开始/结束/失败推 { type:'tool-state', tool, state }（面板忙碌指示）
+  → watch 预热启动推 { type:'watch-started', file, port }
   → 客户端更新列表 + 1.2s 高亮动画
+```
+
+**②b 边改边看（DSH 事件挂钩）**
+
+```
+Agent 调用 office_deck_create
+  → src/index.ts 的 ctx.on('tools/execute') 先广播 tool-state:running（面板忙碌）
+  → 工具生成并 save 后 warmWatch()：会话无 watch 进程则立即启动（不抢正在预览的文件）
+  → ctx.on('tools/result') 广播 tool-state:done/failed（含失败路径）
+  → 预览面板收到 file-updated（带 pageCount）→ 自动打开该文件的 watch 预览
+  → OfficeCLI watch 自身 SSE 持续推送内容刷新，实现「Agent 改，用户边看」
 ```
 
 **③ OfficeCLI watch SSE（内容刷新）**
@@ -545,8 +591,9 @@ dsh-officecli/
 │   │   └── deck.ts              # office_design_guide / office_deck_create / office_slide_add
 │   ├── pptx/                    # PPT 设计层（本项目的核心资产）
 │   │   ├── grid.ts              # 画布/网格/母版三区/字号阶梯 + tint、estimateLines
-│   │   ├── theme.ts             # 5 套主题令牌 + inferTheme / themeToProps
-│   │   ├── layouts.ts           # 11 种版式模板 renderSlide()
+│   │   ├── theme.ts             # 8 套主题令牌 + inferTheme / themeToProps
+│   │   ├── layouts.ts           # 15 种版式模板 renderSlide()
+│   │   ├── templates.ts         # 6 套专业模板（主题 + 装饰 + 页码 + 转场）
 │   │   ├── shape.ts             # ShapeOp 中间表示 → officecli --prop；textHeight 经验公式
 │   │   ├── deck.ts              # DeckSpec 解析校验 + 编译成 batch 命令序列
 │   │   └── checklist.ts         # 字数红线 / 叙事结构 / 自检清单 / 设计指南

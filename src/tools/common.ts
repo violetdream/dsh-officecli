@@ -20,22 +20,43 @@ export function getSessionId(exec: ToolRunContext): string {
   return typeof id === 'string' && id ? id : 'default'
 }
 
-/** 解析文件名并要求文件已存在。 */
-export function requireFile(workspace: WorkspaceManager, sessionId: string, filename: string): string {
-  const abs = workspace.resolve(sessionId, filename)
+/**
+ * 从工具执行上下文取会话工作区（DSH 会话创建时的 cwd）。
+ * dsh-session 的 Session 不直接暴露 cwd，它在 session.header.cwd
+ * （SessionHeader："Absolute working directory the session was created in (if any)"）。
+ * 缺省（headless / agent-less）回退 undefined，由 WorkspaceManager 落到配置根。
+ */
+export function getSessionCwd(exec: ToolRunContext): string | undefined {
+  const cwd = exec.agent?.session.header.cwd
+  return typeof cwd === 'string' && cwd.length > 0 ? cwd : undefined
+}
+
+/** 解析文件名并要求文件已存在。cwd 为会话工作区（DSH 会话 cwd），缺省走配置根。 */
+export function requireFile(
+  workspace: WorkspaceManager,
+  sessionId: string,
+  filename: string,
+  cwd?: string,
+): string {
+  const abs = workspace.resolve(sessionId, filename, cwd)
   if (!existsSync(abs)) {
     throw new Error(`文件不存在: ${filename}。请先 office_create 创建，或用 office_list 查看现有文件。`)
   }
   return abs
 }
 
-/** 工具成功后广播元事件（文件列表 + 编辑高亮）。 */
-export function notify(deps: PluginDeps, sessionId: string, opts: { file?: string; tool?: string }): void {
+/** 工具成功后广播元事件（文件列表 + 编辑高亮 + 可选详情）。cwd 为会话工作区。 */
+export function notify(
+  deps: PluginDeps,
+  sessionId: string,
+  opts: { file?: string; tool?: string; detail?: Record<string, unknown> },
+  cwd?: string,
+): void {
   try {
     deps.events.broadcast(sessionId, {
       type: 'files-changed',
       session: sessionId,
-      files: deps.workspace.listFiles(sessionId),
+      files: deps.workspace.listFiles(sessionId, cwd),
     })
     if (opts.file) {
       deps.events.broadcast(sessionId, {
@@ -43,9 +64,27 @@ export function notify(deps: PluginDeps, sessionId: string, opts: { file?: strin
         session: sessionId,
         file: opts.file,
         tool: opts.tool ?? 'unknown',
+        ...(opts.detail ? { detail: opts.detail } : {}),
       })
     }
   } catch { /* 事件广播失败不影响工具结果 */ }
+}
+
+/**
+ * 保存后预热 watch：会话尚无 watch 进程时立即启动（边改边看），
+ * 已有进程则不切换目标，避免抢走用户正在预览的文件。失败静默 ——
+ * 用户之后点选文件时 /api/officecli/watch 仍会按需启动。cwd 为会话工作区。
+ */
+export function warmWatch(deps: PluginDeps, sessionId: string, file: string, cwd?: string): void {
+  const abs = deps.workspace.resolve(sessionId, file, cwd)
+  void deps.watch.warmIfAbsent(sessionId, abs).then(
+    (port) => {
+      if (port !== undefined) {
+        deps.events.broadcast(sessionId, { type: 'watch-started', session: sessionId, file, port })
+      }
+    },
+    () => {},
+  )
 }
 
 /** 把 officecli 的失败结果转换为带建议的 Error。 */

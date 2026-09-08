@@ -4,8 +4,9 @@ import { existsSync } from 'node:fs'
 import { DeckSpecError, compileDeck, parseDeckSpec, type DeckSpec } from '../pptx/deck.js'
 import { LAYOUT_IDS } from '../pptx/layouts.js'
 import { getTheme, inferTheme, themeToProps } from '../pptx/theme.js'
+import { listTemplates } from '../pptx/templates.js'
 import { VISUAL_CHECKLIST, designGuide } from '../pptx/checklist.js'
-import { cliError, getSessionId, notify, textCard } from './common.js'
+import { cliError, getSessionCwd, getSessionId, notify, textCard, warmWatch } from './common.js'
 import type { PluginDeps } from '../routes.js'
 
 /**
@@ -68,7 +69,7 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
       parameters: {
         section: {
           type: 'string',
-          enum: ['all', 'themes', 'story', 'limits', 'scale', 'spec', 'checklist'] as const,
+          enum: ['all', 'templates', 'themes', 'story', 'limits', 'scale', 'spec', 'checklist'] as const,
           description: '只看某一节；缺省返回完整指南',
         },
       },
@@ -92,7 +93,8 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
       name: 'office_deck_create',
       description:
         '一步生成一份排版完整的 .pptx 演示文稿。你只需要提供内容（DeckSpec JSON），坐标、字号、配色、网格全部由插件内置的设计层计算，' +
-        '无需自己指定位置。生成后用 office_screenshot 看效果并按自检清单修正。' +
+        '无需自己指定位置。可选 template（咨询简报/产品发布/学术答辩/极简/政务报告/年度报告）一键获得专业感，' +
+        '可选 style 注入整份样式（转场/背景/页码/元数据）。生成后用 office_screenshot 看效果并按自检清单修正。' +
         '首次使用请先调用 office_design_guide 了解 DeckSpec 结构与字数红线。',
       parameters: {
         filename: { type: 'string', required: true, description: '输出文件名，必须以 .pptx 结尾（如 ai-intro.pptx）。支持中文名。' },
@@ -100,7 +102,7 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
           type: 'object',
           required: true,
           description:
-            'DeckSpec 对象：{ theme?, footer?, slides: [{layout, ...内容}] }。layout 取值：cover/section/bullets/cards/kpi/steps/compare/timeline/quote/table/ending。详见 office_design_guide。',
+            'DeckSpec 对象：{ template?, theme?, footer?, style?, slides: [{layout, ...内容}] }。layout 取值：cover/section/bullets/cards/kpi/steps/compare/timeline/quote/table/agenda/swot/pricing/roadmap/ending。详见 office_design_guide。',
           additionalProperties: true,
         },
         overwrite: { type: 'boolean', description: '文件已存在时是否覆盖，默认 false' },
@@ -108,9 +110,10 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
       output: {
         schema: { type: 'object', additionalProperties: true },
         render: (_args, value) => {
-          const v = value as { filename: string; pageCount: number; shapeCount: number; layouts: string[]; path: string }
+          const v = value as { filename: string; pageCount: number; shapeCount: number; layouts: string[]; path: string; template?: string; theme: string }
           return textCard(
             `已生成 ${v.filename}：${v.pageCount} 页 / ${v.shapeCount} 个元素`,
+            `模板: ${v.template ?? '（未指定，基础样式）'}  配色: ${v.theme}`,
             `版式: ${v.layouts.join(' → ')}`,
             `路径: ${v.path}`,
             '',
@@ -122,10 +125,11 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
       isConcurrencySafe: () => false,
       async execute(args, exec) {
         const sessionId = getSessionId(exec)
+        const cwd = getSessionCwd(exec)
         if (!/\.pptx$/i.test(args.filename)) {
           throw new Error(`文件名必须以 .pptx 结尾，收到: ${args.filename}`)
         }
-        const abs = deps.workspace.resolve(sessionId, args.filename)
+        const abs = deps.workspace.resolve(sessionId, args.filename, cwd)
         if (existsSync(abs) && !args.overwrite) {
           throw new Error(`文件已存在: ${args.filename}。传 overwrite=true 覆盖，或换一个文件名。`)
         }
@@ -149,7 +153,18 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
         const saveRes = await deps.cli.run(sessionId, ['save', abs])
         if (!saveRes.ok && !/already saved/i.test(String(saveRes.error.error))) throw cliError(saveRes)
 
-        notify(deps, sessionId, { file: args.filename, tool: 'office_deck_create' })
+        notify(deps, sessionId, {
+          file: args.filename,
+          tool: 'office_deck_create',
+          detail: {
+            layouts: compiled.layouts,
+            pageCount: compiled.pageCount,
+            theme: compiled.theme.id,
+            template: compiled.template,
+          },
+        }, cwd)
+        // 边改边看：预热 watch，预览面板可自动打开
+        warmWatch(deps, sessionId, args.filename, cwd)
         return {
           filename: args.filename,
           pageCount: compiled.pageCount,
@@ -157,6 +172,7 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
           layouts: compiled.layouts,
           path: abs,
           theme: compiled.theme.id,
+          template: compiled.template ?? '',
         }
       },
     }),
@@ -201,7 +217,8 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
       isConcurrencySafe: () => false,
       async execute(args, exec) {
         const sessionId = getSessionId(exec)
-        const abs = deps.workspace.resolve(sessionId, args.filename)
+        const cwd = getSessionCwd(exec)
+        const abs = deps.workspace.resolve(sessionId, args.filename, cwd)
         if (!existsSync(abs)) {
           throw new Error(`文件不存在: ${args.filename}。请先用 office_deck_create 或 office_create 创建。`)
         }
@@ -229,10 +246,11 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
         const { renderSlide } = await import('../pptx/layouts.js')
         const { toProps } = await import('../pptx/shape.js')
 
+        const total = existCount + args.slides.length
         args.slides.forEach((raw, i) => {
           const slide = spec.slides[i]!
           const pageNo = insertAt + i
-          const res = renderSlide(slide, theme, pageNo)
+          const res = renderSlide(slide, theme, pageNo, { total })
           commands.push({
             command: 'add',
             path: '/',
@@ -248,6 +266,42 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
               props: toProps(shape),
             })
           }
+          if (res.table) {
+            const { headers, rows } = res.table
+            const data = [headers, ...rows].map((r) => r.join('|')).join(';')
+            commands.push({
+              command: 'add',
+              path: `/slide[${pageNo}]`,
+              type: 'table',
+              props: {
+                rows: String(rows.length + 1),
+                cols: String(headers.length),
+                data,
+                x: `${res.table.x}pt`,
+                y: `${res.table.y}pt`,
+                width: `${res.table.w}pt`,
+                height: `${res.table.h}pt`,
+                headerRow: 'true',
+                bandRow: 'true',
+                fill: theme.bg,
+                color: theme.text,
+                size: '13',
+                'font.ea': theme.fontBody.ea,
+                font: theme.fontBody.latin,
+                align: 'center',
+                valign: 'middle',
+              },
+            })
+          }
+          // 追加页同样支持 per-slide 样式（背景/转场/隐藏）
+          const sp: Record<string, string> = {}
+          if (res.background) sp.background = res.background
+          else if (slide.background) sp.background = slide.background
+          if (slide.transition) sp.transition = slide.transition
+          if (slide.hidden) sp.hidden = 'true'
+          if (Object.keys(sp).length > 0) {
+            commands.push({ command: 'set', path: `/slide[${pageNo}]`, props: sp })
+          }
           void raw
         })
 
@@ -255,7 +309,12 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
         const saveRes = await deps.cli.run(sessionId, ['save', abs])
         if (!saveRes.ok && !/already saved/i.test(String(saveRes.error.error))) throw cliError(saveRes)
 
-        notify(deps, sessionId, { file: args.filename, tool: 'office_slide_add' })
+        notify(deps, sessionId, {
+          file: args.filename,
+          tool: 'office_slide_add',
+          detail: { added: args.slides.length, totalSlides: existCount + args.slides.length, theme: themeId },
+        }, cwd)
+        warmWatch(deps, sessionId, args.filename, cwd)
         return {
           filename: args.filename,
           added: args.slides.length,
