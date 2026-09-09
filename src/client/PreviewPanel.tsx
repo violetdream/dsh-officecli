@@ -1,10 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  IconCloseOutline16,
+  IconDataOutline16,
+  IconListPenOutline16,
+  IconPlayOutline16,
+  IconRefreshOutline16,
+  StateDot,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import { styles } from './styles.ts'
 
 interface SessionFile { name: string; type: 'docx'|'xlsx'|'pptx'; size: number; mtime: number }
 
-const TYPE_ICON: Record<string, string> = { docx: '📘', xlsx: '📊', pptx: '📽️' }
+/** 文件类型图标：与 DSH 图标库一致（文档/数据表/演示），颜色走 currentColor。 */
+const TYPE_ICON = {
+  docx: IconListPenOutline16,
+  xlsx: IconDataOutline16,
+  pptx: IconPlayOutline16,
+} as const
 const formatSize = (b: number) => (b < 1024 ? `${b}B` : b < 1048576 ? `${(b/1024).toFixed(1)}KB` : `${(b/1048576).toFixed(1)}MB`)
 const formatTime = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
@@ -133,19 +146,26 @@ export function PreviewPanel({ ctx, onClose, wide }: { ctx: ClientContext; onClo
 
   return (
     <div style={panelStyle}>
-      <style>{'@keyframes dshOfficecliFlash { from { background: rgba(99,102,241,0.35) } to { background: transparent } }'}</style>
-      <style>{'@keyframes dshBusyPulse { 0%,100% { opacity: 1 } 50% { opacity: 0.25 } }'}</style>
+      <style>{'@keyframes dshOfficecliFlash { from { background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 30%, transparent) } to { background: transparent } }'}</style>
       <div style={styles.header}>
-        <span>📄 Office 预览</span>
+        <span style={styles.headerTitle}><IconListPenOutline16 size={16} /> Office 预览</span>
         <div style={styles.headerButtons}>
-          <button type="button" title="刷新" onClick={refresh} style={styles.iconButton}>↻</button>
-          <button type="button" title="关闭" onClick={onClose} style={styles.iconButton}>×</button>
+          <button type="button" title="刷新" onClick={refresh} style={styles.iconButton}
+            onMouseOver={(e) => { e.currentTarget.style.color = styles.iconButtonHover.color; e.currentTarget.style.backgroundColor = styles.iconButtonHover.backgroundColor }}
+            onMouseOut={(e) => { e.currentTarget.style.color = ''; e.currentTarget.style.backgroundColor = '' }}>
+            <IconRefreshOutline16 size={16} />
+          </button>
+          <button type="button" title="关闭" onClick={onClose} style={styles.iconButton}
+            onMouseOver={(e) => { e.currentTarget.style.color = styles.iconButtonHover.color; e.currentTarget.style.backgroundColor = styles.iconButtonHover.backgroundColor }}
+            onMouseOut={(e) => { e.currentTarget.style.color = ''; e.currentTarget.style.backgroundColor = '' }}>
+            <IconCloseOutline16 size={16} />
+          </button>
         </div>
       </div>
       <div style={styles.sessionBar}>{sessionId ? `会话 ${sessionId.slice(0, 20)}…` : '未连接到会话'}</div>
       {busy ? (
         <div style={styles.busy}>
-          <span style={styles.busyDot} />
+          <StateDot state="ongoing" size={8} />
           Agent 正在运行 {busy} …
         </div>
       ) : null}
@@ -163,18 +183,19 @@ export function PreviewPanel({ ctx, onClose, wide }: { ctx: ClientContext; onClo
             const d = detail[f.name]
             const badge = d?.pageCount !== undefined ? `${d.pageCount} 页` : ''
             const tpl = d?.template ? ` · ${d.template}` : ''
+            const FileIcon = TYPE_ICON[f.type] ?? IconListPenOutline16
             return (
               <div
                 key={f.name}
                 onClick={() => void selectFile(f.name)}
-                onMouseOver={(e) => { if (!isActive) e.currentTarget.style.background = 'var(--dsh-bg-hover, rgba(127,127,127,0.12))' }}
+                onMouseOver={(e) => { if (!isActive) e.currentTarget.style.background = styles.fileItemHover.backgroundColor }}
                 onMouseOut={(e) => { if (!isActive) e.currentTarget.style.background = 'none' }}
                 style={{
                   ...(isActive ? { ...styles.fileItem, ...styles.fileItemActive } : styles.fileItem),
                   ...(isUpdated ? styles.fileUpdated : {}),
                 }}
               >
-                <span style={styles.fileIcon}>{TYPE_ICON[f.type]}</span>
+                <span style={styles.fileIcon}><FileIcon size={16} /></span>
                 <span>{f.name}</span>
                 <span style={styles.fileMeta}>{badge || tpl ? `${badge}${tpl} · ` : ''}{formatSize(f.size)} · {formatTime(f.mtime)}</span>
               </div>

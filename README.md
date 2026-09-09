@@ -58,6 +58,7 @@ OfficeCLI 是一个「没有布局引擎」的命令行工具——官方原话�
 | **主题继承** | `office_slide_add` 追加页面时自动还原原文件配色，不会突然换肤 |
 | **实时预览** | 侧边栏 iframe 嵌入 OfficeCLI watch 页面，Agent 编辑后内容自动刷新（不重载） |
 | **边改边看** | 挂钩 DSH 工具事件（`tools/execute` + `tools/result`），新生成/编辑的文件自动打开预览、面板显示 Agent 忙碌态与页数徽标 |
+| **宿主视觉一致** | 预览面板与侧栏按钮全部使用 DSH 主题变量（`--dsw-*`）与 `dsh-client-ui-primitives` 图标/状态点，随宿主浅深色主题自动适配 |
 | **双通道 SSE** | 插件自有通道传元事件（文件增删改 + 工具状态 + watch 状态），OfficeCLI watch 通道传内容刷新 |
 | **会话隔离** | 每个对话会话独立工作区；生成的文件直接落进 **DSH 会话工作区**（`exec.agent.session.cwd`），无 cwd 时回退 `workspaceDir`/系统临时目录 |
 | **安全执行** | `spawn` 参数数组执行，无 shell 拼接；文件名白名单校验防路径逃逸 |
