@@ -21,6 +21,11 @@ const PORT_LINE_RE = /Watch: https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)/
  */
 export class WatchManager {
   private handles = new Map<string, WatchHandle>()
+  /**
+   * 跟随模式：键存在即为开启，值为锁定文件（null = 跟随 Agent 最近改动的文件）。
+   * 用途是让预览面板在 Agent 改稿时自动切到那个文件 —— 「边改边看」的核心。
+   */
+  private followSessions = new Map<string, string | null>()
   private logger: { warn: (msg: string) => void } = { warn: () => {} }
 
   constructor(private config: Config) {}
@@ -146,10 +151,67 @@ export class WatchManager {
     })
   }
 
+  /**
+   * 「Agent 刚改了这个文件」时调用：跟随模式开启就把 watch 切过去。
+   *
+   * 没有 watch 进程时什么都不做（预览面板没打开，切换无意义）；已经指向该文件
+   * 时也什么都不做 —— 内容刷新由 watch 自己的文件监听负责，再去 switch 反而
+   * 会让页面闪一下。
+   *
+   * @returns 切换后的信息；未发生切换返回 undefined。
+   */
+  /**
+   * 「Agent 刚改了这个文件」时调用，返回这次要不要让客户端重载预览。
+   *
+   * 三种情况：
+   *   - 没有 watch 进程（预览面板没开）→ 什么都不做；
+   *   - 正在看的就是这个文件 → 用 `/api/switch` 原地重读。officecli watch 自述
+   *     「external edits are not detected」，而我们的工具是独立进程改盘写回的，
+   *     等它自己发现并不可靠；实测 POST /api/switch 指向同一个文件会重新打开
+   *     文档（status.version 归零并广播 update），等于一次确定的刷新；
+   *   - 在看别的文件 → 跟随模式开启才切过去，否则不抢用户的屏。
+   */
+  async applyUpdate(
+    session: string,
+    file: string,
+  ): Promise<{ file: string; port: number; switched: boolean; refreshed: boolean } | undefined> {
+    const handle = this.handles.get(session)
+    if (!handle) return undefined
+    if (handle.file === file) {
+      const ok = await this.postToWatch(handle.port, '/api/switch', JSON.stringify({ file }))
+      return { file, port: handle.port, switched: false, refreshed: ok }
+    }
+    if (!this.followSessions.has(session)) return undefined
+    try {
+      await this.switchFile(handle, file)
+      // switchFile 失败时会重启进程，handle 会被换成新对象 —— 重新取一次拿新端口
+      const after = this.handles.get(session)
+      return { file, port: after?.port ?? handle.port, switched: true, refreshed: true }
+    } catch {
+      return undefined
+    }
+  }
+
+  /** 会话销毁时连同跟随状态一起清理。 */
+  clearFollow(session: string): void {
+    this.followSessions.delete(session)
+  }
+
   /** 当前活跃的 watch 句柄信息（不存在则 undefined）。 */
-  status(session: string): { file: string; port: number } | undefined {
+  status(session: string): { file: string; port: number; following: boolean } | undefined {
     const h = this.handles.get(session)
-    return h ? { file: h.file, port: h.port } : undefined
+    if (!h) return undefined
+    return { file: h.file, port: h.port, following: this.followSessions.has(session) }
+  }
+
+  /** 开启/关闭跟随。file 为空表示跟随最近改动的文件。 */
+  setFollow(session: string, file?: string | null): void {
+    this.followSessions.set(session, file ?? null)
+  }
+
+  /** 是否处于跟随模式（客户端初值与开关状态同步用）。 */
+  following(session: string): boolean {
+    return this.followSessions.has(session)
   }
 
   /** 停止某会话的 watch：优先 officecli unwatch，超时强杀进程树。 */

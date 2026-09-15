@@ -1,4 +1,4 @@
-import { estimateLines, pt } from './grid.js'
+import { estimateLines, pt, typeScale } from './grid.js'
 
 // ---------------------------------------------------------------------------
 // 文本高度经验公式
@@ -224,7 +224,7 @@ export function pageTitle(
   name: string,
   text: string,
   theme: { text: string; accent: string; fontTitle: { latin: string; ea: string } },
-  size = 28,
+  size = typeScale().pageTitle,
 ): ShapeOp[] {
   return [
     {
@@ -266,7 +266,8 @@ export function pageFooter(
   theme: { muted: string; fontBody: { latin: string; ea: string } },
   right: string | null = String(pageNo),
 ): ShapeOp[] {
-  const size = 11
+  // 2pt 差是因为页码要与左侧页脚在同一视觉重量上，又要保留数字的可辨识度
+  const size = typeScale().caption
   const common = {
     size,
     color: theme.muted,

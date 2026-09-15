@@ -74,6 +74,32 @@ async function dispatch(
       return json(res, 200, { url: `${PREFIX}/watch/${session}`, file, port })
     }
 
+    if (sub === '/watch-status' && req.method === 'GET') {
+      const st = deps.watch.status(session)
+      return json(res, 200, { running: Boolean(st), following: deps.watch.following(session), file: st?.file ?? null, port: st?.port ?? 0 })
+    }
+
+    // 预览跟随开关：开启后 Agent 每改一次文件，预览面板自动切到那个文件
+    if (sub === '/follow' && (req.method === 'POST' || req.method === 'GET')) {
+      if (req.method === 'POST') {
+        const body = await readJson(req)
+        const on = body.enable !== false
+        if (on) {
+          const file = typeof body.file === 'string' && body.file ? body.file : null
+          const abs = file ? deps.workspace.resolve(session, file) : null
+          deps.watch.setFollow(session, abs)
+        } else {
+          deps.watch.clearFollow(session)
+        }
+      }
+      const st = deps.watch.status(session)
+      return json(res, 200, {
+        following: deps.watch.following(session),
+        file: st?.file ?? null,
+        port: st?.port ?? 0,
+      })
+    }
+
     // ---- watch 代理族: /watch/<session>/<upstream-path...> ----
     if (sub.startsWith('/watch/')) {
       const rest = sub.slice('/watch/'.length)
@@ -95,6 +121,25 @@ async function dispatch(
 
 function sanitize(session: string | null): string {
   return session && SESSION_RE.test(session) ? session : 'default'
+}
+
+/** 读取 JSON 请求体（解析失败返回空对象，交由调用方按缺省处理）。 */
+async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of req) {
+    const buf = chunk as Buffer
+    size += buf.length
+    if (size > 64 * 1024) break
+    chunks.push(buf)
+  }
+  if (chunks.length === 0) return {}
+  try {
+    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {}
+  } catch {
+    return {}
+  }
 }
 
 function json(res: ServerResponse, code: number, body: unknown): void {

@@ -44,7 +44,13 @@ export const BODY = { top: 106, bottom: 478 } as const
 /** 页脚（C 区内）。 */
 export const FOOTER = { x: MARGIN, y: 502, w: CONTENT_W, h: 20, size: 11 } as const
 
-/** 字号阶梯（pt）。由 WorkBuddy 的 1280×720px 阶梯 ×0.75 换算而来。 */
+/**
+ * 字号阶梯（pt）。由 WorkBuddy 的 1280×720px 阶梯 ×0.75 换算而来。
+ *
+ * 这是一份**只读基准**。`layouts.ts` 不直接读它，而是读 {@link typeScale}()
+ * 的返回值 —— 后者可被 `style.typography` 临时替换，从而实现「整份 PPT 字号
+ * 按比例缩放」而不必把缩放参数穿透到每个版式函数。
+ */
 export const FONT = {
   coverTitle: 54, // 45–72
   sectionTitle: 44, // 45–60，取略小以容纳中文
@@ -55,6 +61,51 @@ export const FONT = {
   quote: 22, // 15–19.5 引文，中文放大到 22 才有分量
   caption: 13, // 脚注 / 页码 10.5–12
 } as const
+
+/** 字号阶梯类型：与 {@link FONT} 同构，但字段可变（可被样式缩放）。 */
+export type TypeScale = { -readonly [K in keyof typeof FONT]: number }
+
+/** 当前生效的字号阶梯（每次 0.5pt 量化，避免出现 12.3456 这种脏值）。 */
+let currentScale: TypeScale = { ...FONT }
+
+/** 取当前生效的字号阶梯。版式层一律走这里，不要直接读 FONT。 */
+export function typeScale(): TypeScale {
+  return currentScale
+}
+
+/**
+ * 在 fn 执行期间替换字号阶梯，fn 结束后恢复。
+ *
+ * 编译是同步的，所以作用域式替换在并发会话间不会串台（renderSlide 内没有
+ * await）。但仍通过 try/finally 保证异常路径一定能还原。
+ *
+ * @param scale - 覆盖项：数字表示绝对字号；也可传 `{ scale: 1.1 }` 整体缩放。
+ */
+export function withTypeScale<T>(scale: Partial<TypeScale> & { scale?: number }, fn: () => T): T {
+  const prev = currentScale
+  const factor = typeof scale.scale === 'number' ? clampFactor(scale.scale) : 1
+  const next: TypeScale = { ...prev }
+  for (const key of Object.keys(FONT) as (keyof TypeScale)[]) {
+    const override = scale[key]
+    if (typeof override === 'number' && Number.isFinite(override)) next[key] = quantize(override)
+    else next[key] = quantize(prev[key] * factor)
+  }
+  currentScale = next
+  try {
+    return fn()
+  } finally {
+    currentScale = prev
+  }
+}
+
+function clampFactor(f: number): number {
+  return Math.max(0.6, Math.min(1.6, f))
+}
+
+/** 量化到 0.5pt，避免 officecli 拿到 13.799999 这类浮点脏值。 */
+function quantize(v: number): number {
+  return Math.round(v * 2) / 2
+}
 
 /** 跨 n 栏的宽度。 */
 export function col(span: number): number {

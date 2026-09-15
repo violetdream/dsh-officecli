@@ -13,6 +13,7 @@ export type OfficeEvent =
     }
   | { type: 'tool-state'; session: string; tool: string; state: 'running' | 'done' | 'failed' }
   | { type: 'watch-started'; session: string; file: string; port: number }
+  | { type: 'watch-switched'; session: string; file: string; port: number }
 
 interface SseConnection {
   session: string

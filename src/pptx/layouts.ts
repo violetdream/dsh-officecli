@@ -1,10 +1,11 @@
-import { BODY, CANVAS_H, CANVAS_W, CONTENT_W, FONT, MARGIN, estimateLines, tint } from './grid.js'
+import { BODY, CANVAS_H, CANVAS_W, CONTENT_W, GUTTER, MARGIN, col, estimateLines, tint, typeScale, xOf } from './grid.js'
 import type { Theme } from './theme.js'
 import { hairlineOf, heroBackground, onPrimary, onPrimaryMuted, surfaceOf } from './theme.js'
 import type { DeckTemplate } from './templates.js'
 import { contentDecorShapes, formatPageNumber } from './templates.js'
 import type { ShapeOp } from './shape.js'
 import { TEXT_MARGIN, bgShape, fitSize, pageFooter, pageTitle, roundRectAdj, textHeight } from './shape.js'
+import type { ChartData, DeckElement } from './elements.js'
 
 /**
  * 版式模板层。
@@ -33,8 +34,19 @@ export interface LayoutResult {
    * 存在时 deck 层不再添加铺底矩形（用原生背景 + 装饰形状更干净）。
    */
   background?: string
-  /** 表格版式需要走 `add --type table`，不能走 shape。 */
-  table?: { x: number; y: number; w: number; h: number; headers: string[]; rows: string[][] }
+  /**
+   * 非 shape 元素（图表 / 图片 / 原生表格 / mermaid 图示 / 连接线）。
+   *
+   * 与 {@link shapes} 是两个独立的层：shapes 走 `add --type shape`，这些走各自
+   * 的 `--type`。**插入顺序决定 z-order**，所以 deck 层会先铺 shapes 再放元素，
+   * 保证「底图/卡片在下、图表配图在上」。
+   */
+  elements?: DeckElement[]
+  /**
+   * elements 的层序。默认 `'front'`（形状在下、元素在上，适合图表/配图/表格）；
+   * `'behind'` 时元素先落盘，供全幅底图这类「图在最底层」的版式使用。
+   */
+  elementsBehind?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -80,23 +92,106 @@ export interface RoadmapPhase {
   title: string
   desc?: string
 }
+/** 配图引用。src 必须是本地文件路径（officecli 不支持 http URL）。 */
+export interface ImageRef {
+  /** 图片路径：绝对路径，或相对当前工作目录。 */
+  src: string
+  /** 图注（图下方一行小字）。 */
+  caption?: string
+}
 
-export type SlideSpec =
-  | { layout: 'cover'; eyebrow?: string; title: string; subtitle?: string; meta?: string; transition?: string; background?: string; hidden?: boolean }
-  | { layout: 'section'; number?: string; title: string; subtitle?: string; transition?: string; background?: string; hidden?: boolean }
-  | { layout: 'bullets'; title: string; items: BulletItem[]; columns?: 2; transition?: string; background?: string; hidden?: boolean }
-  | { layout: 'cards'; title: string; cards: CardItem[]; columns?: number; transition?: string; background?: string; hidden?: boolean }
-  | { layout: 'kpi'; title: string; metrics: MetricItem[]; transition?: string; background?: string; hidden?: boolean }
-  | { layout: 'steps'; title: string; steps: BulletItem[]; transition?: string; background?: string; hidden?: boolean }
-  | { layout: 'compare'; title: string; left: CompareSide; right: CompareSide; transition?: string; background?: string; hidden?: boolean }
-  | { layout: 'timeline'; title: string; events: TimelineEvent[]; transition?: string; background?: string; hidden?: boolean }
-  | { layout: 'quote'; quote: string; author?: string; role?: string; transition?: string; background?: string; hidden?: boolean }
-  | { layout: 'table'; title: string; headers: string[]; rows: string[][]; transition?: string; background?: string; hidden?: boolean }
-  | { layout: 'ending'; title?: string; subtitle?: string; transition?: string; background?: string; hidden?: boolean }
-  | { layout: 'agenda'; title: string; items: AgendaItem[]; number?: string; transition?: string; background?: string; hidden?: boolean }
-  | { layout: 'swot'; title: string; s: string[]; w: string[]; o: string[]; t: string[]; transition?: string; background?: string; hidden?: boolean }
-  | { layout: 'pricing'; title: string; plans: PlanItem[]; transition?: string; background?: string; hidden?: boolean }
-  | { layout: 'roadmap'; title: string; phases: RoadmapPhase[]; transition?: string; background?: string; hidden?: boolean }
+/** 所有版式共有的页级字段。 */
+export interface PageBase {
+  transition?: string
+  background?: string
+  hidden?: boolean
+  /**
+   * 演讲者备注（PPT 的「备注」栏）。放映时只有演讲者看得到，
+   * 是「这页我该说什么」的落点——生成汇报稿时强烈建议每页都写。
+   */
+  notes?: string
+  /**
+   * 本页入场动画。`true` 用默认 fade，也可给效果名（fade/fly/zoom/wipe/...）。
+   *
+   * 只对**本页的主视觉元素**（标题 / 巨型数字 / 主图）挂动画，不逐条挂列表，
+   * 否则放映节奏拖沓。建议只给封面、章节页、关键数据页使用。
+   */
+  animate?: boolean | string
+}
+
+/** 版式专属字段；与 {@link PageBase} 取交集才是完整的 SlideSpec。 */
+type SlideVariant =
+  | { layout: 'cover'; eyebrow?: string; title: string; subtitle?: string; meta?: string }
+  | { layout: 'section'; number?: string; title: string; subtitle?: string }
+  | { layout: 'bullets'; title: string; items: BulletItem[]; columns?: 2 }
+  | { layout: 'cards'; title: string; cards: CardItem[]; columns?: number }
+  | { layout: 'kpi'; title: string; metrics: MetricItem[] }
+  | { layout: 'steps'; title: string; steps: BulletItem[] }
+  | { layout: 'compare'; title: string; left: CompareSide; right: CompareSide }
+  | { layout: 'timeline'; title: string; events: TimelineEvent[] }
+  | { layout: 'quote'; quote: string; author?: string; role?: string }
+  | { layout: 'table'; title: string; headers: string[]; rows: string[][] }
+  | { layout: 'ending'; title?: string; subtitle?: string }
+  | { layout: 'agenda'; title: string; items: AgendaItem[]; number?: string }
+  | { layout: 'swot'; title: string; s: string[]; w: string[]; o: string[]; t: string[] }
+  | { layout: 'pricing'; title: string; plans: PlanItem[] }
+  | { layout: 'roadmap'; title: string; phases: RoadmapPhase[] }
+  // ---- 元素型版式（走 officecli 原生 chart / picture / diagram）----
+  | {
+      layout: 'chart'
+      title: string
+      /** 二维数组（首行表头、首列分类）或 officecli 的 `系列:值;系列:值` 串。 */
+      data: ChartData
+      /** 图表类型：column/bar/line/pie/doughnut/area/... 支持 stacked 等修饰。 */
+      chartType?: string
+      /** 右侧洞察结论（图表必须配判断，不能只摆数字）。 */
+      insight?: string
+      /** 洞察下方的补充要点。 */
+      bullets?: BulletItem[]
+      /** 图例位置，缺省 bottom；'none' 隐藏。 */
+      legend?: 'bottom' | 'top' | 'left' | 'right' | 'none'
+      /** 是否显示数据标签。 */
+      dataLabels?: boolean
+      /** 系列配色（hex 数组）。 */
+      colors?: string[]
+      /** 数值轴单位：thousands/millions/... */
+      displayUnits?: string
+      /** 数据来源（页脚上方一行小字）。 */
+      source?: string
+    }
+  | {
+      layout: 'image-split'
+      title: string
+      /** 主视觉图。 */
+      image: ImageRef
+      /** 图片在哪一侧，缺省 left。 */
+      side?: 'left' | 'right'
+      /** 图侧说明段。 */
+      desc?: string
+      /** 文字侧的要点。 */
+      points?: BulletItem[]
+    }
+  | {
+      layout: 'image-full'
+      /** 全幅底图上的骑线大标题。 */
+      title?: string
+      subtitle?: string
+      image: ImageRef
+      /** 文字块靠哪边，缺省 left。 */
+      align?: 'left' | 'right'
+      /** 压暗蒙版强度 0–0.7，缺省 0.35（浅色图上白字必需）。 */
+      overlay?: number
+    }
+  | {
+      layout: 'diagram'
+      title: string
+      /** 内联 mermaid 源码（flowchart/graph/sequenceDiagram 等）。 */
+      mermaid: string
+      /** 图下方说明。 */
+      caption?: string
+    }
+
+export type SlideSpec = PageBase & SlideVariant
 
 export const LAYOUT_IDS = [
   'cover',
@@ -114,6 +209,10 @@ export const LAYOUT_IDS = [
   'swot',
   'pricing',
   'roadmap',
+  'chart',
+  'image-split',
+  'image-full',
+  'diagram',
 ] as const
 
 export type LayoutId = (typeof LAYOUT_IDS)[number]
@@ -233,7 +332,7 @@ const BADGE = 34
 
 function cover(s: Extract<SlideSpec, { layout: 'cover' }>, t: Theme, p: string): LayoutResult {
   const titleW = 720
-  const size = FONT.coverTitle
+  const size = typeScale().coverTitle
   const titleH = textHeight(s.title, size, titleW, TEXT_MARGIN, 1.12)
   const eyebrowH = s.eyebrow ? textHeight(s.eyebrow, 16, titleW) : 0
   const subH = s.subtitle ? textHeight(s.subtitle, 20, 700, TEXT_MARGIN, 1.35) : 0
@@ -323,7 +422,7 @@ function cover(s: Extract<SlideSpec, { layout: 'cover' }>, t: Theme, p: string):
 }
 
 function section(s: Extract<SlideSpec, { layout: 'section' }>, t: Theme, p: string): LayoutResult {
-  const size = FONT.sectionTitle
+  const size = typeScale().sectionTitle
   const titleH = textHeight(s.title, size, 740, TEXT_MARGIN, 1.18)
   const numH = s.number ? textHeight(s.number, 84, 300) : 0
   const subH = s.subtitle ? textHeight(s.subtitle, 20, 700, TEXT_MARGIN, 1.35) : 0
@@ -402,8 +501,8 @@ function bullets(s: Extract<SlideSpec, { layout: 'bullets' }>, t: Theme, p: stri
   const colCount = twoCol ? 2 : 1
   const colW = (CONTENT_W - (colCount - 1) * gap) / colCount
   const badge = twoCol ? 26 : BADGE
-  const titleSize = twoCol ? 15 : FONT.cardTitle
-  const descSize = twoCol ? FONT.body - 4 : FONT.body - 2
+  const titleSize = twoCol ? 15 : typeScale().cardTitle
+  const descSize = twoCol ? typeScale().body - 4 : typeScale().body - 2
   const shapes: ShapeOp[] = [bgShape(`${p}-bg`, t.bg), ...pageTitle(p, s.title, t)]
 
   for (let c = 0; c < colCount; c++) {
@@ -529,7 +628,7 @@ function cards(s: Extract<SlideSpec, { layout: 'cards' }>, t: Theme, p: string):
       })
       cy += tagH + 6
     }
-    const titleH = textHeight(c.title, FONT.cardTitle, innerW)
+    const titleH = textHeight(c.title, typeScale().cardTitle, innerW)
     shapes.push({
       name: `${p}-c${i}-t`,
       text: c.title,
@@ -537,7 +636,7 @@ function cards(s: Extract<SlideSpec, { layout: 'cards' }>, t: Theme, p: string):
       y: cy,
       w: innerW,
       h: titleH,
-      size: FONT.cardTitle,
+      size: typeScale().cardTitle,
       bold: true,
       color: t.text,
       fontLatin: t.fontTitle.latin,
@@ -549,7 +648,7 @@ function cards(s: Extract<SlideSpec, { layout: 'cards' }>, t: Theme, p: string):
     if (c.desc) {
       cy += titleH + 8
       const descH = Math.max(cardH - (cy - y) - 20, 24)
-      const size = fitSize(c.desc, FONT.body - 3, innerW, descH, TEXT_MARGIN, 9, 1.4)
+      const size = fitSize(c.desc, typeScale().body - 3, innerW, descH, TEXT_MARGIN, 9, 1.4)
       shapes.push({
         name: `${p}-c${i}-d`,
         text: c.desc,
@@ -587,7 +686,7 @@ function kpi(s: Extract<SlideSpec, { layout: 'kpi' }>, t: Theme, p: string): Lay
 
   items.forEach((m, i) => {
     const { x, w } = cols[i]!
-    const valueSize = fitSize(m.value, FONT.anchor, w, 92, 0, 24)
+    const valueSize = fitSize(m.value, typeScale().anchor, w, 92, 0, 24)
     const valueH = textHeight(m.value, valueSize, w, 0)
     shapes.push({
       name: `${p}-k${i}-v`,
@@ -907,7 +1006,7 @@ function timeline(s: Extract<SlideSpec, { layout: 'timeline' }>, t: Theme, p: st
 
 function quote(s: Extract<SlideSpec, { layout: 'quote' }>, t: Theme, p: string): LayoutResult {
   const qw = 720
-  const qSize = FONT.quote
+  const qSize = typeScale().quote
   const quoteH = textHeight(s.quote, qSize, qw, TEXT_MARGIN, 1.45)
   const authorH = s.author ? textHeight(s.author, 16, qw) : 0
   const roleH = s.role ? textHeight(s.role, 13, qw) : 0
@@ -996,20 +1095,25 @@ function table(s: Extract<SlideSpec, { layout: 'table' }>, t: Theme, p: string):
   const headH = 40
   return {
     shapes: [bgShape(`${p}-bg`, t.bg), ...pageTitle(p, s.title, t)],
-    table: {
-      x: MARGIN,
-      y: BODY.top,
-      w: CONTENT_W,
-      h: Math.min(BODY.bottom - BODY.top, headH + s.rows.length * rowH),
-      headers: s.headers,
-      rows: s.rows,
-    },
+    elements: [
+      {
+        kind: 'table',
+        name: `${p}-table`,
+        x: MARGIN,
+        y: BODY.top,
+        w: CONTENT_W,
+        h: Math.min(BODY.bottom - BODY.top, headH + s.rows.length * rowH),
+        headers: s.headers,
+        rows: s.rows,
+        headerFill: t.primary,
+      },
+    ],
   }
 }
 
 function ending(s: Extract<SlideSpec, { layout: 'ending' }>, t: Theme, p: string): LayoutResult {
   const title = s.title ?? '谢谢'
-  const titleH = textHeight(title, FONT.sectionTitle, 720, TEXT_MARGIN, 1.18)
+  const titleH = textHeight(title, typeScale().sectionTitle, 720, TEXT_MARGIN, 1.18)
   const subH = s.subtitle ? textHeight(s.subtitle, 16, 720) : 0
   const blockH = titleH + 30 + subH
   let y = centerBlock(blockH)
@@ -1033,7 +1137,7 @@ function ending(s: Extract<SlideSpec, { layout: 'ending' }>, t: Theme, p: string
       y,
       w: 720,
       h: titleH,
-      size: FONT.sectionTitle,
+      size: typeScale().sectionTitle,
       bold: true,
       color: fg(t),
       fontLatin: t.fontTitle.latin,
@@ -1081,7 +1185,7 @@ function agenda(s: Extract<SlideSpec, { layout: 'agenda' }>, t: Theme, p: string
   items.forEach((it, i) => {
     const rowY = BODY.top + i * rowH
     const hasDesc = Boolean(it.desc)
-    const titleH = textHeight(it.title, FONT.cardTitle, 640)
+    const titleH = textHeight(it.title, typeScale().cardTitle, 640)
     const descH = hasDesc ? Math.max(rowH - titleH - 8, 20) : 0
     const titleY = hasDesc ? rowY : rowY + (rowH - titleH) / 2
     shapes.push(
@@ -1110,7 +1214,7 @@ function agenda(s: Extract<SlideSpec, { layout: 'agenda' }>, t: Theme, p: string
         y: titleY,
         w: 640,
         h: titleH,
-        size: FONT.cardTitle,
+        size: typeScale().cardTitle,
         bold: true,
         color: t.text,
         fontLatin: t.fontTitle.latin,
@@ -1484,6 +1588,385 @@ function roadmap(s: Extract<SlideSpec, { layout: 'roadmap' }>, t: Theme, p: stri
   return { shapes }
 }
 
+/**
+ * 数据页：左图（officecli 原生 chart）+ 右洞察。
+ *
+ * 硬约束来自 WorkBuddy 的「数据必须落点」——只摆数字不给判断的是信息板，
+ * 不是汇报稿。所以右侧留固定的结论位，`insight` 缺失时也占位，由设计门禁
+ * 在生成前提示补齐。
+ */
+function chart(s: Extract<SlideSpec, { layout: 'chart' }>, t: Theme, p: string): LayoutResult {
+  const top = BODY.top
+  const h = BODY.bottom - BODY.top
+  const chartW = col(7)
+  const insX = xOf(8)
+  const insW = CANVAS_W - MARGIN - insX
+  const pad = 18
+
+  const elements: DeckElement[] = [
+    {
+      kind: 'chart',
+      name: `${p}-chart`,
+      x: MARGIN,
+      y: top,
+      w: chartW,
+      h,
+      chartType: s.chartType ?? 'column',
+      data: s.data,
+      legend: s.legend ?? 'bottom',
+      dataLabels: s.dataLabels,
+      colors: s.colors ?? [t.primary, t.accent, t.secondary],
+      displayUnits: s.displayUnits,
+      categoryTitle: undefined,
+    },
+  ]
+
+  const shapes: ShapeOp[] = [bgShape(`${p}-bg`, t.bg), ...pageTitle(p, s.title, t)]
+
+  // ---- 右侧洞察卡 ----
+  shapes.push({
+    name: `${p}-icard`,
+    x: insX,
+    y: top,
+    w: insW,
+    h,
+    geometry: 'roundRect',
+    adj: roundRectAdj(6000),
+    fill: surfaceOf(t),
+    line: 'none',
+  })
+  let y = top + pad
+  const iw = insW - pad * 2
+  shapes.push({ name: `${p}-irule`, x: insX + pad, y, w: 3, h: 16, fill: t.accent, line: 'none' })
+  const label = '关键结论'
+  const labelH = textHeight(label, 11, iw)
+  shapes.push({
+    name: `${p}-ilabel`,
+    text: label,
+    x: insX + pad + 11,
+    y,
+    w: iw - 11,
+    h: labelH,
+    size: 11,
+    bold: true,
+    color: t.accent,
+    fontLatin: t.fontBody.latin,
+    fontEa: t.fontBody.ea,
+    align: 'left',
+    valign: 'middle',
+    margin: TEXT_MARGIN,
+  })
+  y += Math.max(labelH, 16) + 12
+
+  const insight = s.insight ?? '（此处写这页数据的判断：这个数字说明什么、对决策意味着什么）'
+  const iSize = 14
+  // ⚠️ 形状上设了 lineSpacing，textHeight 必须拿到同一个值：officecli 的溢出判定
+  // 在设定行距后变成 size×1.333×lineSpacing，不传就会低估行高、触发溢出告警。
+  const iH = textHeight(insight, iSize, iw, TEXT_MARGIN, 1.35)
+  shapes.push({
+    name: `${p}-itext`,
+    text: insight,
+    x: insX + pad,
+    y,
+    w: iw,
+    h: iH,
+    size: iSize,
+    color: t.text,
+    fontLatin: t.fontBody.latin,
+    fontEa: t.fontBody.ea,
+    align: 'left',
+    valign: 'top',
+    lineSpacing: 1.35,
+    margin: TEXT_MARGIN,
+  })
+  y += iH + 16
+
+  // 补充要点：用主色小方块 + 文字，比项目符号更稳（不依赖字体的 bullet 字形）
+  for (const [i, b] of (s.bullets ?? []).slice(0, 3).entries()) {
+    const text = b.desc ? `${b.title}——${b.desc}` : b.title
+    const bh = textHeight(text, 12, iw - 14, TEXT_MARGIN, 1.3)
+    if (y + bh > top + h - pad) break
+    shapes.push({ name: `${p}-ib${i}`, x: insX + pad, y: y + 4, w: 6, h: 6, fill: t.primary, line: 'none' })
+    shapes.push({
+      name: `${p}-ibt${i}`,
+      text,
+      x: insX + pad + 14,
+      y,
+      w: iw - 14,
+      h: bh,
+      size: 12,
+      color: t.muted,
+      fontLatin: t.fontBody.latin,
+      fontEa: t.fontBody.ea,
+      align: 'left',
+      valign: 'top',
+      lineSpacing: 1.3,
+      margin: TEXT_MARGIN,
+    })
+    y += bh + 8
+  }
+
+  if (s.source) {
+    const sh = textHeight(s.source, 10, iw)
+    shapes.push({
+      name: `${p}-isrc`,
+      text: s.source,
+      x: insX + pad,
+      y: top + h - pad - sh,
+      w: iw,
+      h: sh,
+      size: 10,
+      color: t.muted,
+      fontLatin: t.fontBody.latin,
+      fontEa: t.fontBody.ea,
+      align: 'left',
+      valign: 'bottom',
+      margin: TEXT_MARGIN,
+    })
+  }
+
+  return { shapes, elements }
+}
+
+/**
+ * 图文页：一栏大图（officecli 原生 picture）+ 一栏文字。
+ *
+ * 图片不做裁切（officecli 的 picture 没有 objectFit），**原图宽高比必须接近
+ * 图槽比例**，否则会拉伸：
+ *   - 无图注：516 × 372 pt ≈ 1.39 : 1（接近 7:5）
+ *   - 有图注：516 × 350 pt ≈ 1.47 : 1（接近 3:2）
+ * 图注占用的空间是从图槽里让出来的，不是叠在图上——所以有图注时图会略矮一点。
+ */
+function imageSplit(s: Extract<SlideSpec, { layout: 'image-split' }>, t: Theme, p: string): LayoutResult {
+  const top = BODY.top
+  const imgW = col(7)
+  const txtW = col(5)
+  const right = s.side === 'right'
+  const imgX = right ? MARGIN + txtW + GUTTER : MARGIN
+  const txtX = right ? MARGIN : MARGIN + imgW + GUTTER
+
+  // 图注从 B 区底部让位，避免与 C 区页脚相撞
+  const capH = s.image.caption ? textHeight(s.image.caption, 10, imgW) : 0
+  const h = BODY.bottom - BODY.top - (capH ? capH + 8 : 0)
+
+  const shapes: ShapeOp[] = [bgShape(`${p}-bg`, t.bg), ...pageTitle(p, s.title, t)]
+
+  // 图片外描边：浅色图上用极淡的边框界定边界，避免白底图「飘」在背景里
+  shapes.push({
+    name: `${p}-imgframe`,
+    x: imgX,
+    y: top,
+    w: imgW,
+    h,
+    geometry: 'roundRect',
+    adj: roundRectAdj(2000),
+    fill: 'transparent',
+    line: `${hairlineOf(t)}:1:solid`,
+  })
+
+  const elements: DeckElement[] = [
+    { kind: 'picture', name: `${p}-img`, src: s.image.src, x: imgX, y: top, w: imgW, h },
+  ]
+
+  const pad = 4
+  let y = top + pad
+  if (s.desc) {
+    const dh = textHeight(s.desc, 13, txtW, TEXT_MARGIN, 1.4)
+    shapes.push({
+      name: `${p}-desc`,
+      text: s.desc,
+      x: txtX,
+      y,
+      w: txtW,
+      h: dh,
+      size: 13,
+      color: t.muted,
+      fontLatin: t.fontBody.latin,
+      fontEa: t.fontBody.ea,
+      align: 'left',
+      valign: 'top',
+      lineSpacing: 1.4,
+      margin: TEXT_MARGIN,
+    })
+    y += dh + 20
+  }
+
+  for (const [i, b] of (s.points ?? []).slice(0, 4).entries()) {
+    const text = b.title
+    const dh = b.desc ? textHeight(b.desc, 12, txtW - 20, TEXT_MARGIN, 1.35) : 0
+    const th = textHeight(text, 15, txtW - 20)
+    if (y + th + dh > top + h) break
+    shapes.push({ name: `${p}-dot${i}`, x: txtX, y: y + 6, w: 8, h: 8, geometry: 'ellipse', fill: t.accent, line: 'none' })
+    shapes.push({
+      name: `${p}-pt${i}`,
+      text,
+      x: txtX + 20,
+      y,
+      w: txtW - 20,
+      h: th,
+      size: 15,
+      bold: true,
+      color: t.text,
+      fontLatin: t.fontTitle.latin,
+      fontEa: t.fontTitle.ea,
+      align: 'left',
+      valign: 'top',
+      margin: TEXT_MARGIN,
+    })
+    y += th + 2
+    if (b.desc) {
+      shapes.push({
+        name: `${p}-pd${i}`,
+        text: b.desc,
+        x: txtX + 20,
+        y,
+        w: txtW - 20,
+        h: dh,
+        size: 12,
+        color: t.muted,
+        fontLatin: t.fontBody.latin,
+        fontEa: t.fontBody.ea,
+        align: 'left',
+        valign: 'top',
+        lineSpacing: 1.35,
+        margin: TEXT_MARGIN,
+      })
+      y += dh
+    }
+    y += 18
+  }
+
+  if (s.image.caption) {
+    shapes.push({
+      name: `${p}-cap`,
+      text: s.image.caption,
+      x: imgX,
+      y: top + h + 8,
+      w: imgW,
+      h: capH,
+      size: 10,
+      color: t.muted,
+      fontLatin: t.fontBody.latin,
+      fontEa: t.fontBody.ea,
+      align: 'left',
+      valign: 'top',
+      margin: TEXT_MARGIN,
+    })
+  }
+
+  return { shapes, elements }
+}
+
+/**
+ * 封面级全幅图页：整页底图 + 压暗蒙版 + 骑线文字块。
+ *
+ * 层序靠 `elementsBehind` 显式声明 —— 底图必须先于蒙版与文字落盘
+ * （officecli 的 z-order 由插入顺序决定，见文件头铁律 1）。
+ */
+function imageFull(s: Extract<SlideSpec, { layout: 'image-full' }>, t: Theme, p: string): LayoutResult {
+  const scrim = Math.max(0, Math.min(0.7, s.overlay ?? 0.35))
+  const align = s.align ?? 'left'
+  const blockW = 520
+  const blockX = align === 'left' ? 56 : CANVAS_W - 56 - blockW
+
+  const title = s.title ?? ''
+  const titleSize = typeScale().coverTitle
+  const titleH = title ? textHeight(title, titleSize, blockW, TEXT_MARGIN, 1.16) : 0
+  const subSize = 16
+  const subH = s.subtitle ? textHeight(s.subtitle, subSize, blockW, TEXT_MARGIN, 1.35) : 0
+  const totalH = titleH + (subH ? subH + 18 : 0)
+  let y = Math.max(BODY.top, (CANVAS_H - totalH) / 2 - 20)
+
+  const shapes: ShapeOp[] = []
+  // 蒙版：整页半透明黑，保证白字在任何底图上都可读
+  shapes.push({
+    name: `${p}-scrim`,
+    x: 0,
+    y: 0,
+    w: CANVAS_W,
+    h: CANVAS_H,
+    fill: '000000',
+    opacity: scrim,
+    line: 'none',
+  })
+  if (title) {
+    shapes.push({
+      name: `${p}-title`,
+      text: title,
+      x: blockX,
+      y,
+      w: blockW,
+      h: titleH,
+      size: titleSize,
+      bold: true,
+      color: 'FFFFFF',
+      fontLatin: t.fontTitle.latin,
+      fontEa: t.fontTitle.ea,
+      align: 'left',
+      valign: 'top',
+      lineSpacing: 1.16,
+      margin: TEXT_MARGIN,
+    })
+    y += titleH + 14
+    // 强调短横压在标题与副标之间
+    shapes.push({ name: `${p}-rule`, x: blockX, y, w: 56, h: 4, fill: t.accent, line: 'none' })
+    y += 18
+  }
+  if (s.subtitle) {
+    shapes.push({
+      name: `${p}-sub`,
+      text: s.subtitle,
+      x: blockX,
+      y,
+      w: blockW,
+      h: subH,
+      size: subSize,
+      color: 'FFFFFF',
+      fontLatin: t.fontBody.latin,
+      fontEa: t.fontBody.ea,
+      align: 'left',
+      valign: 'top',
+      lineSpacing: 1.35,
+      margin: TEXT_MARGIN,
+    })
+  }
+
+  const elements: DeckElement[] = [
+    { kind: 'picture', name: `${p}-bgimg`, src: s.image.src, x: 0, y: 0, w: CANVAS_W, h: CANVAS_H },
+  ]
+
+  return { shapes, elements, elementsBehind: true }
+}
+
+/** 图示页：mermaid 源码编译成原生图形（officecli 的 diagram 走本地布局，不依赖远程渲染）。 */
+function diagram(s: Extract<SlideSpec, { layout: 'diagram' }>, t: Theme, p: string): LayoutResult {
+  const top = BODY.top
+  const capH = s.caption ? textHeight(s.caption, 11, CONTENT_W) + 8 : 0
+  const h = BODY.bottom - BODY.top - capH
+  const shapes: ShapeOp[] = [bgShape(`${p}-bg`, t.bg), ...pageTitle(p, s.title, t)]
+  if (s.caption) {
+    shapes.push({
+      name: `${p}-cap`,
+      text: s.caption,
+      x: MARGIN,
+      y: top + h + 8,
+      w: CONTENT_W,
+      h: capH - 8,
+      size: 11,
+      color: t.muted,
+      fontLatin: t.fontBody.latin,
+      fontEa: t.fontBody.ea,
+      align: 'center',
+      valign: 'top',
+      margin: TEXT_MARGIN,
+    })
+  }
+  return {
+    shapes,
+    elements: [{ kind: 'diagram', name: `${p}-dia`, text: s.mermaid, x: MARGIN, y: top, w: CONTENT_W, h }],
+  }
+}
+
 /** renderSlide 的上下文：总页数、页脚、页码格式与模板装饰。 */
 export interface RenderContext {
   /** 总页数（页码格式 `{total}` 用）。 */
@@ -1507,7 +1990,9 @@ export function renderSlide(spec: SlideSpec, theme: Theme, pageNo: number, ctx: 
     spec.layout === 'cover' ||
     spec.layout === 'section' ||
     spec.layout === 'quote' ||
-    spec.layout === 'ending'
+    spec.layout === 'ending' ||
+    // 全幅底图页是 hero 页：蒙版上压页脚既不好读也破坏画面，一律不加
+    spec.layout === 'image-full'
   if (!footed) {
     const right = formatPageNumber(ctx.pageNumber, pageNo, ctx.total)
     res.shapes.push(...pageFooter(p, ctx.footerText ?? '', pageNo, theme, right))
@@ -1552,6 +2037,14 @@ function renderCore(spec: SlideSpec, theme: Theme, p: string): LayoutResult {
       return pricing(spec, theme, p)
     case 'roadmap':
       return roadmap(spec, theme, p)
+    case 'chart':
+      return chart(spec, theme, p)
+    case 'image-split':
+      return imageSplit(spec, theme, p)
+    case 'image-full':
+      return imageFull(spec, theme, p)
+    case 'diagram':
+      return diagram(spec, theme, p)
   }
 }
 

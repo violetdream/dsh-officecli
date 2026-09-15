@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="tlFU7cuwh3ealfkLg8AwvU">
+<head data-page-node-id="o6E7mSA9mfg0YwjSM4AFhn">
+<meta charset="UTF-8" data-page-node-id="GHzh5VV50gxBgWW0ZvTJMi">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="db0oJWnrrAUQdvnEt4xnew">
+<title>dsh-officecli 插件架构设计分析</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2333; --line:#30363d;
+    --text:#e6edf3; --muted:#8b949e; --accent:#58a6ff; --accent2:#7ee787;
+    --warn:#f0883e; --purple:#bc8cff; --pink:#ff7b72; --teal:#39d2c0;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:var(--text);font-family:"PingFang SC","Microsoft YaHei",-apple-system,"Segoe UI",sans-serif;line-height:1.7;}
+  .wrap{max-width:1180px;margin:0 auto;padding:40px 28px 80px;}
+  h1{font-size:30px;font-weight:700;letter-spacing:.5px;margin-bottom:6px;}
+  h1 .hl{color:var(--accent);}
+  .subtitle{color:var(--muted);font-size:14px;margin-bottom:36px;}
+  h2{font-size:21px;margin:52px 0 8px;padding-left:12px;border-left:4px solid var(--accent);}
+  h2 .num{color:var(--accent);margin-right:8px;font-family:Consolas,monospace;}
+  .lead{color:var(--muted);font-size:14px;margin-bottom:18px;padding-left:16px;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px 24px;margin:16px 0;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;}
+  @media(max-width:860px){.grid2,.grid3{grid-template-columns:1fr;}}
+  .tag{display:inline-block;font-size:12px;padding:2px 10px;border-radius:20px;margin:2px 4px 2px 0;border:1px solid var(--line);color:var(--muted);}
+  .tag.b{color:var(--accent);border-color:rgba(88,166,255,.4);}
+  .tag.g{color:var(--accent2);border-color:rgba(126,231,135,.4);}
+  .tag.p{color:var(--purple);border-color:rgba(188,140,255,.4);}
+  .tag.o{color:var(--warn);border-color:rgba(240,136,62,.4);}
+  code,.mono{font-family:Consolas,"JetBrains Mono",monospace;font-size:13px;}
+  code{background:#21262d;padding:1px 7px;border-radius:5px;color:#79c0ff;}
+  .kv{font-size:13.5px;color:var(--muted);}
+  .kv b{color:var(--text);font-weight:600;}
+  svg{display:block;width:100%;height:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;}
+  .fig{margin:18px 0 6px;}
+  .figcap{color:var(--muted);font-size:12.5px;text-align:center;margin:8px 0 4px;}
+  .flow-note{font-size:13px;color:var(--muted);padding:10px 16px;border-left:3px solid var(--line);margin:14px 0;}
+  .flow-note b{color:var(--accent2);}
+  ul.clean{list-style:none;padding-left:16px;}
+  ul.clean li{font-size:14px;color:var(--muted);padding:4px 0 4px 18px;position:relative;}
+  ul.clean li::before{content:"▸";position:absolute;left:0;color:var(--accent);}
+  ul.clean li b{color:var(--text);}
+  .step{display:flex;gap:12px;margin:10px 0;}
+  .step .n{flex:0 0 26px;height:26px;border-radius:50%;background:rgba(88,166,255,.15);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:13px;font-family:Consolas,monospace;border:1px solid rgba(88,166,255,.35);}
+  .step .t{font-size:14px;color:var(--muted);padding-top:2px;}
+  .step .t b{color:var(--text);}
+</style>
+</head>
+<body data-page-node-id="0JF7BcTuLMV5WuxFguiQyu">
+<div class="wrap" data-page-node-id="CrIb6p08gP5MXSE1VY9GTn">
+
+<h1 data-page-node-id="PxzehlG6Q1zOjzIZoSEQ4A">dsh-officecli <span class="hl" data-page-node-id="f8sqlRMf035YODBQBlpaqB">Agent 插件</span> 架构设计分析</h1>
+<div class="subtitle" data-page-node-id="uVu6AScItpFeubCzU4JGN5">仓库：github.com/violetdream/dsh-officecli · DeepSeek-Harness (DSH) 插件 · 让 Agent 用自然语言创建/编辑 Office 文档（docx / xlsx / pptx）· TypeScript + React + Node.js · MIT</div>
+
+<!-- ============ 1. 设计思想 ============ -->
+<h2 data-page-node-id="ytb9szhYTh1usxuPY17rD6"><span class="num" data-page-node-id="YrByXVNV6pKgzAORjaajEn">01</span>核心设计思想：为什么需要这层插件</h2>
+<div class="lead" data-page-node-id="765jpAL4Yu6IMETFkj7lee">一句话：<b style="color:var(--text)" data-page-node-id="BDdZsIVp50j63Ynonjlcpb">OfficeCLI 没有布局引擎</b>，模型直接调 add shape 坐标必歪 —— 插件在「模型意图」与「命令行原语」之间插入一个 <b style="color:var(--text)" data-page-node-id="g6hRzNf63B5Ba3B69FheQX">PPT 设计编译层</b>。</div>
+
+<div class="card" data-page-node-id="IFmScFR3mOHhCUGYKnkEe8">
+<div class="kv" style="margin-bottom:14px" data-page-node-id="n9DzkPHMeB8ZS3EZ3KXnOp">官方定位：<i data-page-node-id="DlW3njOujlLuvHw7VVewSw">"Positioning is explicit — no layout engine, you own the grid math"</i>（坐标是显式的，没有布局引擎，网格数学由调用方负责）。如果让 AI 模型直接下发底层 <code data-page-node-id="yZAsHZ0irNSEE6PlkbwN4L">add shape</code> 并自己填坐标，排版几乎必然摆歪。因此插件形成一个三段式职责链：</div>
+<svg viewBox="0 0 1120 190" xmlns="http://www.w3.org/2000/svg" data-page-node-id="3YU251CKXF13OfowAod4it">
+  <defs data-page-node-id="9VTXxjxcix5AGs7WtpQf0m">
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" data-page-node-id="Fa6i2B9kFkya95Ed72yMjO">
+      <path d="M0,0 L10,5 L0,10 z" fill="#58a6ff" data-page-node-id="JBB2tUeQjb6NPgWm3wBCDV"/>
+    </marker>
+  </defs>
+  <!-- 模型 -->
+  <rect x="20" y="40" width="240" height="100" rx="12" fill="#1c2333" stroke="#58a6ff" stroke-width="1.5" data-page-node-id="3vfL0ULbDc9DeLHBAZnGl7"/>
+  <text x="140" y="75" text-anchor="middle" fill="#58a6ff" font-size="17" font-weight="bold" data-page-node-id="4ND1U7nJkZ7JyJPU7q1wPU">模型（Agent）</text>
+  <text x="140" y="100" text-anchor="middle" fill="#8b949e" font-size="12.5" data-page-node-id="u9xx73AhRv0VixJHM7BvSX">只写「内容意图」</text>
+  <text x="140" y="120" text-anchor="middle" fill="#8b949e" font-size="12.5" data-page-node-id="Ex05PTKoKTjBIMsWjYGgQV">DeckSpec JSON + 字数红线约束</text>
+  <!-- 插件设计层 -->
+  <rect x="420" y="30" width="280" height="120" rx="12" fill="#132a1c" stroke="#7ee787" stroke-width="2" data-page-node-id="9n6Je5OcX70rxlUbyKDaBe"/>
+  <text x="560" y="62" text-anchor="middle" fill="#7ee787" font-size="17" font-weight="bold" data-page-node-id="svL75EX9UlBNSj9AW41CuZ">插件设计层（本仓库）</text>
+  <text x="560" y="86" text-anchor="middle" fill="#8b949e" font-size="12.5" data-page-node-id="CHubN2Rl7jNXeCP1ADWBVZ">算坐标 · 字号阶梯 · 配色令牌</text>
+  <text x="560" y="106" text-anchor="middle" fill="#8b949e" font-size="12.5" data-page-node-id="9QtjyCCnGLXfMvgRAYSed4">12栏网格 / 8pt基线 / 主题继承</text>
+  <text x="560" y="132" text-anchor="middle" fill="#39d2c0" font-size="12" font-family="Consolas" data-page-node-id="nh5uxqZ1f2Vup9kKtcPqeg">意图 → 编译为上百条 add shape</text>
+  <!-- officecli -->
+  <rect x="860" y="40" width="240" height="100" rx="12" fill="#1c2333" stroke="#f0883e" stroke-width="1.5" data-page-node-id="wwYoAE2DBjmjsH3zYvSuz5"/>
+  <text x="980" y="75" text-anchor="middle" fill="#f0883e" font-size="17" font-weight="bold" data-page-node-id="KxTq5RwGtpj0gyKxmP5nsY">OfficeCLI（外部命令）</text>
+  <text x="980" y="100" text-anchor="middle" fill="#8b949e" font-size="12.5" data-page-node-id="Pe9iguKc5iGmN841PU8DN4">无脑执行显式坐标</text>
+  <text x="980" y="120" text-anchor="middle" fill="#8b949e" font-size="12.5" data-page-node-id="Pzhe5K2BnASdXTLE93MXFp">产出 docx / xlsx / pptx</text>
+  <line x1="260" y1="90" x2="414" y2="90" stroke="#58a6ff" stroke-width="2" marker-end="url(#arr)" data-page-node-id="z7EISH5qBMVkSWJOWTb4gH"/>
+  <line x1="700" y1="90" x2="854" y2="90" stroke="#7ee787" stroke-width="2" marker-end="url(#arr)" data-page-node-id="ih4efykfTSlzaZB2Cmp0gF"/>
+  <text x="337" y="80" text-anchor="middle" fill="#8b949e" font-size="11.5" data-page-node-id="Hb0amGlJAdAW807kIWfr5b">结构化意图</text>
+  <text x="777" y="80" text-anchor="middle" fill="#8b949e" font-size="11.5" data-page-node-id="D3yAI05lSkEk8UE3D5sEhW">batch 原语命令</text>
+</svg>
+<div class="figcap" data-page-node-id="InNQBGjlkjow8O9h1lbhMP">图 1 · 三段式职责链：模型只负责内容，设计层负责排版数学，OfficeCLI 只负责执行</div>
+<div class="flow-note" data-page-node-id="jp06ldbfrRq0TlBrfztjyI"><b data-page-node-id="2VcBsUojNAr4l4lHCFfnZL">docx / xlsx 为什么不进设计层？</b>—— 它们是结构化流式文档，编辑贴近原语即可，无需布局数学；插件对这两类只提供 12 个底层原语工具。真正需要"设计"的只有 pptx，于是沉淀出 3 个高层工具 + 一整套设计系统（15 种版式 / 8 套主题 / 6 套模板）。</div>
+</div>
+
+<!-- ============ 2. 系统全景 ============ -->
+<h2 data-page-node-id="OvmeBIB3SkOYBSqXZJAcNb"><span class="num" data-page-node-id="TrEaL8iudHgFFZfdg1EwOt">02</span>系统全景架构</h2>
+<div class="lead" data-page-node-id="GC7Amhm7uHMePo5y1Inik0">插件是「双半结构」：宿主半跑在 DSH 的 Node 进程里（cordis 插件机制），客户端半是注入 Web UI 的 React bundle，两者经 HTTP/SSE 协作。</div>
+
+<div class="fig" data-page-node-id="1JZ6YCOF1jJkeKgeYaS6qM">
+<svg viewBox="0 0 1120 560" xmlns="http://www.w3.org/2000/svg" data-page-node-id="cokGIQ5PhylydKusyXzSro">
+  <defs data-page-node-id="pRaElZV0H8wUhZN8zkPQD9">
+    <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" data-page-node-id="mD9x3BSaSUqUQesKGGnnhW">
+      <path d="M0,0 L10,5 L0,10 z" fill="#58a6ff" data-page-node-id="L8DC1oA9H9fgdcndhWUXlU"/>
+    </marker>
+    <marker id="arrg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" data-page-node-id="q2AiofigIciUSSZxDIlCYT">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7ee787" data-page-node-id="xpkGpp7LK6mtF9ofSY1uDv"/>
+    </marker>
+    <marker id="arro" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" data-page-node-id="eSiDJ4s8kc3PA1NbTeq27d">
+      <path d="M0,0 L10,5 L0,10 z" fill="#f0883e" data-page-node-id="QHgqOmSmB3IZTv2RHZcDPo"/>
+    </marker>
+    <marker id="arrp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" data-page-node-id="DtXdjbZIqyP1u8p4h5IjHS">
+      <path d="M0,0 L10,5 L0,10 z" fill="#bc8cff" data-page-node-id="8yMKB40N98B2jVYFar3cIS"/>
+    </marker>
+  </defs>
+
+  <!-- 用户/浏览器层 -->
+  <rect x="20" y="20" width="1080" height="120" rx="14" fill="#111827" stroke="#30363d" data-page-node-id="6qstS7F8m3j7DNn7fzxtDx"/>
+  <text x="40" y="48" fill="#8b949e" font-size="13" font-weight="bold" data-page-node-id="chdIbkBJ4JhoTTOCaZsUdE">浏览器 · DSH Web UI</text>
+  <rect x="50" y="66" width="200" height="56" rx="8" fill="#1c2333" stroke="#58a6ff" data-page-node-id="ErEGzwGAaT2pOPHgsPz8gv"/>
+  <text x="150" y="90" text-anchor="middle" fill="#e6edf3" font-size="13.5" data-page-node-id="RPALEmTkqXF7jGWMdD2yWI">对话窗 + Agent</text>
+  <text x="150" y="110" text-anchor="middle" fill="#8b949e" font-size="11" data-page-node-id="jjFddPf7rNaKBQ5PMeUkEL">模型能力探测（image 模态）</text>
+  <rect x="290" y="66" width="230" height="56" rx="8" fill="#1c2333" stroke="#bc8cff" data-page-node-id="LQsvCdUjMGkEvRLPpCUMSx"/>
+  <text x="405" y="90" text-anchor="middle" fill="#e6edf3" font-size="13.5" data-page-node-id="Sg0bvxADwn7ipui5FIpyGe">客户端半 lib/client.js</text>
+  <text x="405" y="110" text-anchor="middle" fill="#8b949e" font-size="11" data-page-node-id="9rYk5oX87m4lbBFXQFDlmk">React · sidebar.footer.action 插槽</text>
+  <rect x="560" y="66" width="250" height="56" rx="8" fill="#1c2333" stroke="#bc8cff" data-page-node-id="aFYBX8hUWjx4nD0kBaIV3c"/>
+  <text x="685" y="90" text-anchor="middle" fill="#e6edf3" font-size="13.5" data-page-node-id="R1kIqZmRdwG5LrlfSftk6u">「📄 Office 预览」侧边栏</text>
+  <text x="685" y="110" text-anchor="middle" fill="#8b949e" font-size="11" data-page-node-id="e2dwkSv9ABXl7OtSdSyQWd">iframe 嵌 watch 页 · 边改边看</text>
+  <rect x="850" y="66" width="220" height="56" rx="8" fill="#1c2333" stroke="#39d2c0" data-page-node-id="MWJ032Ift7zGHjJOwzNDRj"/>
+  <text x="960" y="90" text-anchor="middle" fill="#e6edf3" font-size="13.5" data-page-node-id="7SiljXHdFCcsiQnn1b6qVy">样式继承 --dsw-* 变量</text>
+  <text x="960" y="110" text-anchor="middle" fill="#8b949e" font-size="11" data-page-node-id="iV064t4FwFrEKNzLp9qitX">主题颜色与宿主保持一致</text>
+
+  <!-- 插件宿主半 -->
+  <rect x="20" y="180" width="760" height="290" rx="14" fill="#0f1a14" stroke="#7ee787" stroke-width="1.5" data-page-node-id="AqHYpL4flZWVkjrjpQCPaq"/>
+  <text x="40" y="210" fill="#7ee787" font-size="13.5" font-weight="bold" data-page-node-id="PlNDFFkbRPHA9YuGB0Fd4G">插件宿主半（lib/*.js · Node.js · cordis 插件）</text>
+
+  <rect x="45" y="230" width="180" height="60" rx="8" fill="#1c2333" stroke="#30363d" data-page-node-id="cnvMFSC15V3TVdPxqcCgrE"/>
+  <text x="135" y="255" text-anchor="middle" fill="#e6edf3" font-size="12.5" data-page-node-id="2B6FtYxSK8Z95jcDS78gSE">index.ts 入口</text>
+  <text x="135" y="274" text-anchor="middle" fill="#8b949e" font-size="10.5" data-page-node-id="AtKV76UPfqWeyVanSxSyvR">config schema + apply() + ctx.inject</text>
+  <rect x="245" y="230" width="180" height="60" rx="8" fill="#1c2333" stroke="#30363d" data-page-node-id="xLZLdrwZddDDZdVesr99DC"/>
+  <text x="335" y="255" text-anchor="middle" fill="#e6edf3" font-size="12.5" data-page-node-id="muWYAPIYttdvMFaGvAB61t">tools/ · 15 个 AI 工具</text>
+  <text x="335" y="274" text-anchor="middle" fill="#8b949e" font-size="10.5" data-page-node-id="lpce5YazaNltFFk81ryM4h">12 底层原语 + 3 高层 PPT 工具</text>
+  <rect x="445" y="230" width="150" height="60" rx="8" fill="#1c2333" stroke="#30363d" data-page-node-id="fDbpiE6rAMdp0aCbWZQfst"/>
+  <text x="520" y="255" text-anchor="middle" fill="#e6edf3" font-size="12.5" data-page-node-id="h0wNkWRN0OtcEAK08R8LfH">routes.ts</text>
+  <text x="520" y="274" text-anchor="middle" fill="#8b949e" font-size="10.5" data-page-node-id="pJCy2tRFTwEdEVobkj3Z1N">/api/officecli/*</text>
+  <rect x="615" y="230" width="145" height="60" rx="8" fill="#1c2333" stroke="#30363d" data-page-node-id="J6UDmpQkcAPexVxB18k5JF"/>
+  <text x="687" y="255" text-anchor="middle" fill="#e6edf3" font-size="12.5" data-page-node-id="DTSMwofAV5bBFvo5XwQ5jv">events.ts</text>
+  <text x="687" y="274" text-anchor="middle" fill="#8b949e" font-size="10.5" data-page-node-id="0vvK84MtqAVErdjtvMzYoB">插件自有 SSE</text>
+
+  <rect x="45" y="315" width="180" height="60" rx="8" fill="#1c2333" stroke="#30363d" data-page-node-id="ZIzFkPRHlmGeYhJZIOD34u"/>
+  <text x="135" y="340" text-anchor="middle" fill="#e6edf3" font-size="12.5" data-page-node-id="FXtmv3PVC6wQHUGbDas1m2">service.ts</text>
+  <text x="135" y="359" text-anchor="middle" fill="#8b949e" font-size="10.5" data-page-node-id="xPy9BNFzVlFctudAhJdH7q">spawn 安全执行 · JSON 信封</text>
+  <rect x="245" y="315" width="180" height="60" rx="8" fill="#1c2333" stroke="#30363d" data-page-node-id="DqM8zsxbCRPeLKSPPn9yrP"/>
+  <text x="335" y="340" text-anchor="middle" fill="#e6edf3" font-size="12.5" data-page-node-id="8IlQdzaHh7ymBmZUDFYJDz">workspace.ts</text>
+  <text x="335" y="359" text-anchor="middle" fill="#8b949e" font-size="10.5" data-page-node-id="d7WZwuOaYwJYivMd10KfXb">会话隔离 · 文件名白名单防逃逸</text>
+  <rect x="445" y="315" width="150" height="60" rx="8" fill="#1c2333" stroke="#30363d" data-page-node-id="ttX5sIWSvmtPlwocwqtKOB"/>
+  <text x="520" y="340" text-anchor="middle" fill="#e6edf3" font-size="12.5" data-page-node-id="Ny8Cblprjur5GncDbnhQgb">watch.ts</text>
+  <text x="520" y="359" text-anchor="middle" fill="#8b949e" font-size="10.5" data-page-node-id="IC1Snrb9zqrhc2Ho6R6Ah0">watch 子进程/端口发现</text>
+  <rect x="615" y="315" width="145" height="60" rx="8" fill="#1c2333" stroke="#30363d" data-page-node-id="A4Ep005k2i4ndp2oya8bja"/>
+  <text x="687" y="340" text-anchor="middle" fill="#e6edf3" font-size="12.5" data-page-node-id="gmmgCTiDrAdviS1xHELS7u">proxy.ts</text>
+  <text x="687" y="359" text-anchor="middle" fill="#8b949e" font-size="10.5" data-page-node-id="bncdOHW6Ql0JKc0eRyedj4">HTML/Host改写 · SSE透传</text>
+
+  <!-- PPT 设计层 -->
+  <rect x="45" y="400" width="715" height="52" rx="8" fill="#132a1c" stroke="#7ee787" stroke-dasharray="5 3" data-page-node-id="ZrMb0JuaSQ0O6A8ZYktiOC"/>
+  <text x="400" y="422" text-anchor="middle" fill="#7ee787" font-size="12.5" font-weight="bold" data-page-node-id="mbTGcqqoAMy4A1RA2pIojc">pptx/ 设计层（核心资产）：grid 网格 · theme 8主题 · layouts 15版式 · templates 6模板 · shape --prop 编译 · deck DeckSpec 编译 · checklist 字数红线</text>
+  <text x="400" y="440" text-anchor="middle" fill="#8b949e" font-size="10.5" data-page-node-id="f9rRIL19uQlkiURFWTwC9d">960×540pt 画布 · 12栏网格 · 8pt 基线 · 文本高度公式（266 形状实测标定）</text>
+
+  <!-- OfficeCLI -->
+  <rect x="820" y="180" width="280" height="130" rx="14" fill="#241a0f" stroke="#f0883e" stroke-width="1.5" data-page-node-id="pYasL3VyATqcd2Y4DInBEL"/>
+  <text x="960" y="210" text-anchor="middle" fill="#f0883e" font-size="14" font-weight="bold" data-page-node-id="4LuXg9CrMBc1FL8x9ClBLH">OfficeCLI（外部 exe）</text>
+  <text x="960" y="234" text-anchor="middle" fill="#8b949e" font-size="11.5" data-page-node-id="espUUPNYFCmsl5KQVjcIXn">spawn 参数数组 · 无 shell 拼接</text>
+  <text x="960" y="254" text-anchor="middle" fill="#8b949e" font-size="11.5" data-page-node-id="GEdpd3l6U6kTVktcS33bas">超时：command 30s / batch 60s</text>
+  <text x="960" y="278" text-anchor="middle" fill="#39d2c0" font-size="11.5" font-family="Consolas" data-page-node-id="kNcbTB2007C4PChqNPUkSS">watch 子命令 → HTTP watch 页</text>
+  <text x="960" y="296" text-anchor="middle" fill="#8b949e" font-size="11" data-page-node-id="bFKVAIlaz0uxIikSHy4Gk9">native 渲染依赖本机 PowerPoint COM</text>
+
+  <!-- 文件区 -->
+  <rect x="820" y="340" width="280" height="130" rx="14" fill="#1a1224" stroke="#bc8cff" stroke-width="1.5" data-page-node-id="vCVamI7PW8pnwz0iziRhxK"/>
+  <text x="960" y="370" text-anchor="middle" fill="#bc8cff" font-size="14" font-weight="bold" data-page-node-id="Dloga2QXuhnbPEigHgoCIu">DSH 会话工作区（文件落盘）</text>
+  <text x="960" y="394" text-anchor="middle" fill="#8b949e" font-size="11.5" data-page-node-id="3gfbqCdBKfdGeakPHJZAN9">&lt;workspaceDir&gt;/&lt;session-id&gt;/*.docx|xlsx|pptx</text>
+  <text x="960" y="414" text-anchor="middle" fill="#8b949e" font-size="11.5" data-page-node-id="wVxnjj6J6OSn6VGvnd6Nkz">优先级：会话 cwd &gt; 配置 workspaceDir &gt; 系统临时目录</text>
+  <text x="960" y="438" text-anchor="middle" fill="#8b949e" font-size="11" data-page-node-id="WrZwDkiYJpKdXJrl0H3IIe">文件名黑名单正则放行 CJK / emoji</text>
+
+  <!-- 连线 -->
+  <line x1="405" y1="122" x2="405" y2="176" stroke="#bc8cff" stroke-width="2" marker-end="url(#arrp)" data-page-node-id="TAG5rhTTLmnaoV03em7F63"/>
+  <text x="418" y="152" fill="#bc8cff" font-size="11" data-page-node-id="MMCdGrpcUkUNBOcDbG1Ipm">客户端 bundle 注入启动图</text>
+  <line x1="335" y1="290" x2="335" y2="311" stroke="#30363d" stroke-width="1.5" data-page-node-id="6HfyjHL9iinuP8SuPECdqQ"/>
+  <line x1="960" y1="310" x2="960" y2="336" stroke="#f0883e" stroke-width="2" marker-end="url(#arro)" data-page-node-id="FPFgdW55mUIADZIoXEgLf7"/>
+  <text x="975" y="328" fill="#f0883e" font-size="11" data-page-node-id="3izTwXHpLTHOgj9yD5IcU8">读写</text>
+  <line x1="520" y1="375" x2="816" y2="250" stroke="#7ee787" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrg)" data-page-node-id="jjt6BElmjikiugRh67Yx5h"/>
+  <text x="640" y="300" fill="#7ee787" font-size="11" data-page-node-id="d0ryBv6C6538cZ37798ugB">代理 watch 页面请求</text>
+  <line x1="685" y1="122" x2="687" y2="176" stroke="#58a6ff" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr2)" data-page-node-id="EH1abEujmaCJ6S5PbcACN9"/>
+  <text x="700" y="152" fill="#58a6ff" font-size="11" data-page-node-id="hDD5soOlQBQv63t6kI1Oyn">SSE×2：插件元事件 + watch 内容刷新</text>
+</svg>
+<div class="figcap" data-page-node-id="pYVBIruxYiU4ubAlNGirGk">图 2 · 系统全景：浏览器双半 ↔ 插件宿主半（cordis）↔ OfficeCLI ↔ 会话工作区</div>
+</div>
+
+<div class="card" data-page-node-id="WVpnLjXfANDEeRxnXrY05I">
+  <div class="kv" data-page-node-id="gY7ih8Xs4VkGphRp3GpAOX"><b data-page-node-id="6fiMQO8DxevS3k0B4hUXyr">分层职责（自上而下）</b></div>
+  <ul class="clean" data-page-node-id="8Fu6q3LKM9Z7iGgNMcqPmh">
+    <li data-page-node-id="fAEz5tAR0DTCWPXCCUC5nY"><b data-page-node-id="MRygv8cVytf0ZWyYm2i3m7">表现层</b> — React 客户端半：侧边栏入口、预览浮层（PreviewPanel），样式走宿主 <code data-page-node-id="14cymq3wp33aPw2x1YvH4q">--dsw-*</code> 变量保证视觉一致</li>
+    <li data-page-node-id="ExRM0RFW2orE8m3ahBQxBc"><b data-page-node-id="h2idMXdTDAtr7oS1LqR2lJ">框架层</b> — cordis 依赖注入：<code data-page-node-id="ud4na1Uo2tWuwzV6WxjWXt">ctx.tools / ctx.webServer / ctx.attachments</code>，可选服务必须 <code data-page-node-id="0YxXbax19DY7fDcaE81J2z">ctx.inject</code> 延迟获取（踩坑 #1）</li>
+    <li data-page-node-id="Y6NxudVLLtCj9mCzYhoHVw"><b data-page-node-id="f2aFOGIxRCBtfoJ6JmKE4Z">设计层</b> — 纯 TS 的 pptx/ 编译器：DeckSpec → ShapeOp → officecli 命令，无任何 IO 副作用，可独立测试</li>
+    <li data-page-node-id="BgzXZFMLOHkEEyPhHz3VEh"><b data-page-node-id="DFo9zLnc8e3ADBH304lXdt">工具层</b> — 15 个 AI 工具注册进 Agent 工具表，含公共校验（common.ts）</li>
+    <li data-page-node-id="VHS63NC5Q1tOdjOQCBPCVa"><b data-page-node-id="rdSDDY9BnzQ7tKRZupDg43">基础设施层</b> — service / workspace / watch / proxy / events：进程管理、隔离、代理、推送</li>
+    <li data-page-node-id="VKMioiHlPVM9KSDefqcnAF"><b data-page-node-id="rA7tNDB79Q0Ed7L2EhSkcx">外部命令</b> — OfficeCLI exe：唯一落盘执行者，watch 子命令额外提供预览服务</li>
+  </ul>
+</div>
+
+<!-- ============ 3. 15个工具 ============ -->
+<h2 data-page-node-id="TfZ8Y7Cg7WDVFVyncu0elc"><span class="num" data-page-node-id="dynuPECErKaeB7D3HDBNBj">03</span>工具体系：12 底层原语 + 3 高层设计工具</h2>
+<div class="grid2" data-page-node-id="171faNSmNOva5SzcDDUNFW">
+  <div class="card" data-page-node-id="h1lVU4AgGeFanapgH5A5jN">
+    <div class="kv" data-page-node-id="amQuTfQF8IXnSAAUUoTidy"><b style="color:var(--accent)" data-page-node-id="m5068pDzwwEn3THGQQbK8D">12 个底层原语</b>（docx / xlsx / pptx 通用）</div>
+    <div style="margin-top:8px" data-page-node-id="paZdkUhXy7N5vWtDGP7ij3">
+      <span class="tag b" data-page-node-id="gAFLdf3KGuXWQV5RCK0lGs">office_create</span><span class="tag b" data-page-node-id="h6MneNo8cdTm9LIo6deQxA">office_list</span><span class="tag b" data-page-node-id="zmKkThuhQtvVsSHwXJP1KT">office_view</span><span class="tag b" data-page-node-id="L6l4h0JIMWvn970TNqjEet">office_get</span><span class="tag b" data-page-node-id="4ew7R6phvdxHdE8Q4VY9cR">office_query</span><span class="tag b" data-page-node-id="4Tb9JqGNvtIQ2fXIIAIGiQ">office_set</span><span class="tag b" data-page-node-id="E3vkDGZvPqmQ8dzFy0iWAK">office_add</span><span class="tag b" data-page-node-id="0meBjFdBbGGjtGuWme3vBz">office_remove</span><span class="tag b" data-page-node-id="DrWvf3A3dAtiNEf5dH5xKb">office_move</span><span class="tag o" data-page-node-id="euRUNdKwAr9Tw61Vg4LKpR">office_batch（原子事务·失败回滚）</span><span class="tag b" data-page-node-id="IQfzsaiF3DbRmqtjslAShG">office_dump</span><span class="tag b" data-page-node-id="8wt9eLVbQVoCZRfxHGb162">office_screenshot</span>
+    </div>
+    <div class="kv" style="margin-top:12px" data-page-node-id="k2wWYYWfRSBBrE6Lqe0fwV">模型用它们对文档做贴近 OOXML 原语的精确读写。<code data-page-node-id="aHGFwh7qGRroH8tvAjbY1M">office_batch</code> 先在临时副本上全部执行成功才 Replace，失败可定位到具体命令——<b data-page-node-id="d7ZsowTuwwaXXAuznloEz1">原子性靠"副本先行"而非事务日志</b>。</div>
+  </div>
+  <div class="card" data-page-node-id="ViOIEXnTEv5JA9AdfLLGmL">
+    <div class="kv" data-page-node-id="OswYv1V4BHcqG1smIKZbDp"><b style="color:var(--accent2)" data-page-node-id="EL1ay2IPPqfyD2o0wu1s49">3 个高层 PPT 工具</b>（推荐调用顺序）</div>
+    <div class="step" data-page-node-id="sCxRCQ5GWYVXiqtoYww7UA"><div class="n" data-page-node-id="2sK9HsGPSMfsMqpzHWvxVw">1</div><div class="t" data-page-node-id="DWk7wVvI7NmkvCmwL5WdvD"><b data-page-node-id="w5WQGGwZfCmzWLHCeVJNKm">office_design_guide</b> — 返回设计规范/字数红线的结构化分段（guideSections 按 key 组织，防切全文切碎契约）</div></div>
+    <div class="step" data-page-node-id="iUqk5X72Bchtp9hcVW8ObS"><div class="n" data-page-node-id="GybZA4NZukIymZvDcmT9N0">2</div><div class="t" data-page-node-id="XG2JVhspG1CYqqHhHlKW1o"><b data-page-node-id="vGjGg8JMziNJzJlMCYv0x8">office_deck_create</b> — 模型提交 DeckSpec JSON 一步生成整份 pptx</div></div>
+    <div class="step" data-page-node-id="5iXezUHL1iJysRBsvlAQWi"><div class="n" data-page-node-id="emMoUySTfr1JbvVxGuwcjk">3</div><div class="t" data-page-node-id="pBTODFrz8spig0jt98a8qZ"><b data-page-node-id="oS7E7zRITUx8T0UNGk1ape">office_screenshot</b> — 渲染 PNG 回传对话，模型"看见"产出后自修正（探测模型 image 模态，不支持则降级结构化校验）</div></div>
+    <div class="step" data-page-node-id="tHsB4Mo6OcRBuDLMMfE2i8"><div class="n" data-page-node-id="rwt9zEYOs5UdQdBM9UqHu9">+</div><div class="t" data-page-node-id="37ClScHsG6FskV77tujx9h"><b data-page-node-id="d7FLZRxxAdAcscT23WUt1z">office_slide_add</b> — 追加页自动 <code data-page-node-id="VeKDK0iCv2SjHUFFcH5MYO">inferTheme()</code> 还原原文件配色，防突然换肤</div></div>
+  </div>
+</div>
+
+<!-- ============ 4. PPT设计层 ============ -->
+<h2 data-page-node-id="PmATa2Fst1ItdAkTO1Jz0O"><span class="num" data-page-node-id="r1w6S6gXpA4iCSHm2RGEDK">04</span>PPT 设计层内部结构（核心资产）</h2>
+<div class="lead" data-page-node-id="CofMUD8Mbyu39zz4WoLomJ">纯 TypeScript 编译器：输入 DeckSpec，输出 officecli 命令序列。设计系统 = 网格 + 主题 + 版式 + 模板 + 红线五个正交概念。</div>
+
+<div class="fig" data-page-node-id="27LEUCJJag6r1kop7j5Kxs">
+<svg viewBox="0 0 1120 420" xmlns="http://www.w3.org/2000/svg" data-page-node-id="t1G7Doz4w2qdvOCbpsB7IZ">
+  <defs data-page-node-id="aTDE91Bj3TCX74q88VZKYF">
+    <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" data-page-node-id="cyPvSMhPXdiMKVXGfNxmR7">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7ee787" data-page-node-id="lbOmUySoa6gHE29fTSWZSK"/>
+    </marker>
+  </defs>
+  <!-- 输入 -->
+  <rect x="20" y="140" width="200" height="140" rx="12" fill="#1c2333" stroke="#58a6ff" stroke-width="1.5" data-page-node-id="DRsOM4gaCE3ah1HRO1YTJb"/>
+  <text x="120" y="172" text-anchor="middle" fill="#58a6ff" font-size="14" font-weight="bold" data-page-node-id="aoxalM6yBiuhNXGMYMP28h">DeckSpec JSON 输入</text>
+  <text x="120" y="198" text-anchor="middle" fill="#8b949e" font-size="11.5" font-family="Consolas" data-page-node-id="JJtp5FSIEmuajL0UD5OrkG">{theme, slides:[</text>
+  <text x="120" y="216" text-anchor="middle" fill="#8b949e" font-size="11.5" font-family="Consolas" data-page-node-id="NqYsFxO1gBIKSn4wHjENGm">{layout:"cover",</text>
+  <text x="120" y="234" text-anchor="middle" fill="#8b949e" font-size="11.5" font-family="Consolas" data-page-node-id="FpI3axmKD1bh3rh3rehDd4"> title:"..."}]}</text>
+  <text x="120" y="262" text-anchor="middle" fill="#39d2c0" font-size="10.5" data-page-node-id="uqg0cMcyTw6LBarQG0CkrW">模型只写内容，不写坐标</text>
+
+  <!-- 编译管线 -->
+  <rect x="280" y="30" width="560" height="360" rx="14" fill="#0f1a14" stroke="#7ee787" stroke-width="1.5" data-page-node-id="BhiPqcfbzAi1hOOLQA5ygA"/>
+  <text x="560" y="58" text-anchor="middle" fill="#7ee787" font-size="14" font-weight="bold" data-page-node-id="AYKR9ilcktw2uJzLxi7lgT">deck.ts · DeckSpec 编译管线</text>
+
+  <rect x="310" y="80" width="150" height="66" rx="8" fill="#1c2333" stroke="#30363d" data-page-node-id="K7ivchW7Oi1xslllVutUvy"/>
+  <text x="385" y="106" text-anchor="middle" fill="#e6edf3" font-size="12.5" data-page-node-id="dLGBCjOrmbKShJjJuaY5qH">checklist.ts</text>
+  <text x="385" y="124" text-anchor="middle" fill="#8b949e" font-size="10" data-page-node-id="UOhNOeBxYlM35KSYXEZptN">字数红线校验</text>
+  <text x="385" y="138" text-anchor="middle" fill="#8b949e" font-size="10" data-page-node-id="Nfl58Dp44xqS5L5TY7iNAe">cover.title≤18字 等</text>
+
+  <rect x="480" y="80" width="150" height="66" rx="8" fill="#1c2333" stroke="#30363d" data-page-node-id="gfRHtYxyyce61QVLdLE0bV"/>
+  <text x="555" y="106" text-anchor="middle" fill="#e6edf3" font-size="12.5" data-page-node-id="2Qei3q6vc44rTd1P6gFhWe">theme.ts</text>
+  <text x="555" y="124" text-anchor="middle" fill="#8b949e" font-size="10" data-page-node-id="NsBfJSdpLdLLNlq2sgPyPg">8 套主题 · 10色令牌</text>
+  <text x="555" y="138" text-anchor="middle" fill="#8b949e" font-size="10" data-page-node-id="kHL25MM0hzzx7ubclXBTIJ">+ inferTheme 继承</text>
+
+  <rect x="650" y="80" width="160" height="66" rx="8" fill="#1c2333" stroke="#30363d" data-page-node-id="eThkdxMEl5qkUEWWddYYWI"/>
+  <text x="730" y="106" text-anchor="middle" fill="#e6edf3" font-size="12.5" data-page-node-id="B5NP4u3Cgdar0Q5Ahl86mb">layouts.ts (1004行)</text>
+  <text x="730" y="124" text-anchor="middle" fill="#8b949e" font-size="10" data-page-node-id="GF705SYc7vBwoIwtzCBmJw">15 种版式 renderSlide()</text>
+  <text x="730" y="138" text-anchor="middle" fill="#8b949e" font-size="10" data-page-node-id="gfFXsYqL6mOOHx7VC1awld">cover/kpi/swot/timeline…</text>
+
+  <rect x="310" y="180" width="150" height="66" rx="8" fill="#1c2333" stroke="#30363d" data-page-node-id="loQUQltrnL1xE49WGC5E8o"/>
+  <text x="385" y="206" text-anchor="middle" fill="#e6edf3" font-size="12.5" data-page-node-id="uWyvjlN7bLPXkkZh2Groic">grid.ts</text>
+  <text x="385" y="224" text-anchor="middle" fill="#8b949e" font-size="10" data-page-node-id="BkcFlbv0n2AyRcoHMskjh9">960×540pt · 12栏</text>
+  <text x="385" y="238" text-anchor="middle" fill="#8b949e" font-size="10" data-page-node-id="Gs1s65DDjoivBLy6cNA5Qm">栏宽60+槽16 · 8pt基线</text>
+
+  <rect x="480" y="180" width="150" height="66" rx="8" fill="#1c2333" stroke="#30363d" data-page-node-id="BKgGq7O5YXqgQpCWgnXc26"/>
+  <text x="555" y="206" text-anchor="middle" fill="#e6edf3" font-size="12.5" data-page-node-id="8HgIZSrUcJ1ooSssTiExog">shape.ts</text>
+  <text x="555" y="224" text-anchor="middle" fill="#8b949e" font-size="10" data-page-node-id="SAbtt3qwLw1TeXi7ZAMLMH">ShapeOp → --prop</text>
+  <text x="555" y="238" text-anchor="middle" fill="#8b949e" font-size="10" data-page-node-id="u6Obbps3X3Lb22tLHD8B1u">文本高度公式·20+属性</text>
+
+  <rect x="650" y="180" width="160" height="66" rx="8" fill="#1c2333" stroke="#30363d" data-page-node-id="wdpBtxQqbr5USm6jgVdvkX"/>
+  <text x="730" y="206" text-anchor="middle" fill="#e6edf3" font-size="12.5" data-page-node-id="XhFxevcB0Hof3oHmVG6Wcb">templates.ts</text>
+  <text x="730" y="224" text-anchor="middle" fill="#8b949e" font-size="10" data-page-node-id="TmQqlGB8FaVC7BCTyDW292">6 套专业模板（正交）</text>
+  <text x="730" y="238" text-anchor="middle" fill="#8b949e" font-size="10" data-page-node-id="JC2Lm0D9dOtKb7IMw2k9BY">页码格式/默认转场</text>
+
+  <rect x="310" y="285" width="500" height="72" rx="8" fill="#241a0f" stroke="#f0883e" data-page-node-id="RoBnFEtG6qBQtuFhAbLpDf"/>
+  <text x="560" y="312" text-anchor="middle" fill="#f0883e" font-size="13" font-weight="bold" data-page-node-id="4iGUMfYEfspYftxmGa41vJ">输出：上百条带单位的 add shape 命令（一次 batch）</text>
+  <text x="560" y="336" text-anchor="middle" fill="#8b949e" font-size="11" data-page-node-id="9c4cF1fZQvdgKOERFL2Pae">长度必须带单位（裸数字当 EMU）· 不用 zorder，背景靠插入顺序置底</text>
+
+  <!-- 输出 -->
+  <rect x="900" y="140" width="200" height="140" rx="12" fill="#241a0f" stroke="#f0883e" stroke-width="1.5" data-page-node-id="pkhxZvCCrK8BIfQ6WKoeTI"/>
+  <text x="1000" y="180" text-anchor="middle" fill="#f0883e" font-size="14" font-weight="bold" data-page-node-id="VHeG22IahFONjO5o2oS2Fb">OfficeCLI 执行</text>
+  <text x="1000" y="208" text-anchor="middle" fill="#8b949e" font-size="11.5" data-page-node-id="lfVdyKVsEIhqvp279QXrQI">spawn → JSON 信封解析</text>
+  <text x="1000" y="228" text-anchor="middle" fill="#8b949e" font-size="11.5" data-page-node-id="I1AJKVzNDyxB3WOtRMTWgJ">原子事务：临时副本全成功</text>
+  <text x="1000" y="246" text-anchor="middle" fill="#8b949e" font-size="11.5" data-page-node-id="WATkw78PRDY8UX9C11W1Eo">才 Replace 到正式文件</text>
+  <text x="1000" y="268" text-anchor="middle" fill="#39d2c0" font-size="10.5" data-page-node-id="LAOYqepumN5mZLqM9dwsKm">→ .pptx 落盘会话工作区</text>
+
+  <line x1="220" y1="210" x2="276" y2="210" stroke="#58a6ff" stroke-width="2" marker-end="url(#arr3)" data-page-node-id="WBdhls196hxifwabvbGFdb"/>
+  <line x1="840" y1="210" x2="896" y2="210" stroke="#7ee787" stroke-width="2" marker-end="url(#arr3)" data-page-node-id="Ri3fCWbbzDSTEc7QK3WHcl"/>
+  <text x="252" y="196" text-anchor="middle" fill="#8b949e" font-size="10.5" data-page-node-id="n98hmQdBuhdyEDvVqiDh6p">校验</text>
+</svg>
+<div class="figcap" data-page-node-id="Za4TXnDnm9vGEyTvwcae0d">图 3 · DeckSpec 编译管线：红线校验 → 主题/版式解析 → 网格数学 → ShapeOp → batch 命令</div>
+</div>
+
+<div class="card" data-page-node-id="6akH6InPEbHy1KSCVa8OCE">
+<div class="kv" data-page-node-id="S4GtybDL9VvkruK9K7nFlY"><b data-page-node-id="CggGHFBtc3rCbnKh7hSWa5">设计系统的五个正交概念</b></div>
+<div class="grid3" style="margin-top:10px" data-page-node-id="BMW3RX629UBiB4SAd68XVd">
+  <div class="kv" data-page-node-id="Fgl892554ddtiVnMebDAps"><b data-page-node-id="JbHT7TJdXgH0MypDBrwVZ4">① 网格</b><br data-page-node-id="PGxK0PiJ6yKOhDjmoeu5a8">960×540pt 画布、页边距 32pt、12 栏（栏宽60+槽16）、8pt 基线、母版 A/B/C 三区（标题/内容/页脚）</div>
+  <div class="kv" data-page-node-id="Pvp0Hl6oIyEtM94BCdlvv6"><b data-page-node-id="pKyzClCktETqv3shseEWoi">② 字号阶梯</b><br data-page-node-id="kaRWdGB0foCEOZIfOcDXZG">封面主标题 54pt · KPI 数字 64pt · 页面标题 28pt · 正文 16pt；文本高度 <span class="mono" data-page-node-id="c7aOzAbKRjjT0swQhLoVNW">ceil(lines×size×1.35×ls+6+margin×2)</span></div>
+  <div class="kv" data-page-node-id="DDXcfCi6Cega4LR8GehK3x"><b data-page-node-id="szta2xSp0JHBT0Yrg7SzQD">③ 主题 ×8</b><br data-page-node-id="HBHSJ3lSyFxiRznDrkxqeA">business-blue（默认）/ academic-crimson / tech-cyan（深）/ warm-orange / gov-red / minimal-gray / nature-green / luxury-black（深），每套 10 色令牌+字体</div>
+  <div class="kv" data-page-node-id="kSe0ntkF8N2bA4TT52aIqX"><b data-page-node-id="l4RG7C0fgstHgGigIhegU2">④ 版式 ×15</b><br data-page-node-id="VyzkLa6mZ3YSBB8q5CNw0I">cover · section · bullets · cards · kpi · steps · compare · timeline · quote · table · agenda · swot · pricing · roadmap · ending</div>
+  <div class="kv" data-page-node-id="z3VyT1gx4W3PKfilAH3VUO"><b data-page-node-id="BzeIjQmWxU4B2ajWpJNl5o">⑤ 模板 ×6</b><br data-page-node-id="mlihXxtnyDUSALcbLDRAV5">consulting / product-launch / academic-defense / minimal / gov-report / annual-report —— 与版式正交，一键套"外衣"</div>
+  <div class="kv" data-page-node-id="qEmrrpaQql2vo2LLrq68py"><b data-page-node-id="bKoz6PWUHXyBTAGVp4xnQk">+ 字数红线</b><br data-page-node-id="Hot5if9H4U8jrV0rQaqBCj">逐字段上限随设计指南下发：cover.title ≤18字、bullets 标题 ≤22字、kpi.value ≤6字符 —— <b data-page-node-id="Ow3b6cbXywQyYpgnNkCBJH">在源头抑制溢出</b>而非事后裁剪</div>
+</div>
+</div>
+
+<!-- ============ 5. 流程链路 ============ -->
+<h2 data-page-node-id="kMAAcApTovigJuZUh1RMyc"><span class="num" data-page-node-id="6zJpMEoexHdd8L9JbMju2C">05</span>关键流程链路</h2>
+<div class="lead" data-page-node-id="R8eLnNGzVDEJM84zOOlk9H">四条主链路：① PPT 生成主流程　② 视觉自检闭环　③ 边改边看（双通道 SSE）　④ 通用工具调用与安全执行。</div>
+
+<div class="fig" data-page-node-id="V6hrAd3rTzv0dKl4u7611s">
+<svg viewBox="0 0 1120 300" xmlns="http://www.w3.org/2000/svg" data-page-node-id="vA6IqzM4mSwWV8LEKVArT5">
+  <defs data-page-node-id="DAEkCQ5ZiPo5YDpBMm8xMG">
+    <marker id="arr4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" data-page-node-id="5OHtDh0iF00ccyPgqJfOr7">
+      <path d="M0,0 L10,5 L0,10 z" fill="#58a6ff" data-page-node-id="RKUSib03WzBu2myGn6ClSx"/>
+    </marker>
+  </defs>
+  <text x="30" y="34" fill="#58a6ff" font-size="14" font-weight="bold" data-page-node-id="TMcYatWmqsqWIwOOKnGyiZ">链路 ①：office_deck_create — 一句话到 pptx 的主流程</text>
+  <!-- nodes -->
+  <g font-size="12" text-anchor="middle" data-page-node-id="4tc3UBybVYXUrUe8jhMWMu">
+    <rect x="30" y="70" width="150" height="70" rx="10" fill="#1c2333" stroke="#58a6ff" data-page-node-id="HlPhYBDjGPeziKdwvksb1i"/>
+    <text x="105" y="98" fill="#e6edf3" data-page-node-id="rvyPQ7t502zetyfvHIJQCd">用户对话</text>
+    <text x="105" y="118" fill="#8b949e" font-size="10.5" data-page-node-id="zV3JaT5OgxoxzuS04UvOu3">"帮我做一份产品发布 PPT"</text>
+    <rect x="220" y="70" width="150" height="70" rx="10" fill="#1c2333" stroke="#58a6ff" data-page-node-id="AHVaJ1bQT09cPHIQLTJJhC"/>
+    <text x="295" y="98" fill="#e6edf3" data-page-node-id="Srzprh96d4oaxqpbQJyWkE">office_design_guide</text>
+    <text x="295" y="118" fill="#8b949e" font-size="10.5" data-page-node-id="4tAWHUSSk3Fz7GSLeJzJjA">获取规范+字数红线</text>
+    <rect x="410" y="70" width="160" height="70" rx="10" fill="#132a1c" stroke="#7ee787" data-page-node-id="pPkKfWxnK56LrjNFx1naga"/>
+    <text x="490" y="98" fill="#7ee787" data-page-node-id="mtFjm52Q8wsWcHtkCA45jF">模型产出 DeckSpec</text>
+    <text x="490" y="118" fill="#8b949e" font-size="10.5" data-page-node-id="WAD6RdnWYfZCMwaxrnZBB2">只含内容与版式意图</text>
+    <rect x="610" y="70" width="160" height="70" rx="10" fill="#132a1c" stroke="#7ee787" data-page-node-id="uDHRx5qj8IKNNdV6NQlpvQ"/>
+    <text x="690" y="98" fill="#7ee787" data-page-node-id="M1oRhuxb4J6ySLQZz3DvRs">deck.ts 编译</text>
+    <text x="690" y="118" fill="#8b949e" font-size="10.5" data-page-node-id="jgioRuxk7ZKRXfBu6MfNIz">红线校验→网格→ShapeOp</text>
+    <rect x="810" y="70" width="140" height="70" rx="10" fill="#241a0f" stroke="#f0883e" data-page-node-id="JtuiKDQTAKI0RHNBwfRwwB"/>
+    <text x="880" y="98" fill="#f0883e" data-page-node-id="U05bacycdJpXyeWDHfUeFB">batch 原子执行</text>
+    <text x="880" y="118" fill="#8b949e" font-size="10.5" data-page-node-id="1O8ooTJltN1tPAoLkZ220A">spawn OfficeCLI</text>
+    <rect x="990" y="70" width="100" height="70" rx="10" fill="#1a1224" stroke="#bc8cff" data-page-node-id="BeGtKLlQ3mnRC4TGzHMXG2"/>
+    <text x="1040" y="98" fill="#bc8cff" data-page-node-id="8evxW8NL4gwScAoyDEaApw">.pptx 落盘</text>
+    <text x="1040" y="118" fill="#8b949e" font-size="10.5" data-page-node-id="GrFL9TGCjzQYPtmR1IwLyB">会话工作区</text>
+  </g>
+  <line x1="180" y1="105" x2="216" y2="105" stroke="#58a6ff" stroke-width="2" marker-end="url(#arr4)" data-page-node-id="e8IQVt1SDb1jYe3mVNNSlc"/>
+  <line x1="370" y1="105" x2="406" y2="105" stroke="#58a6ff" stroke-width="2" marker-end="url(#arr4)" data-page-node-id="Fp2BlOzWLqjB5DJmY5Pp8g"/>
+  <line x1="570" y1="105" x2="606" y2="105" stroke="#58a6ff" stroke-width="2" marker-end="url(#arr4)" data-page-node-id="HZV7A3wQprZC1gwmyxz1cX"/>
+  <line x1="770" y1="105" x2="806" y2="105" stroke="#58a6ff" stroke-width="2" marker-end="url(#arr4)" data-page-node-id="A8cIZooFjjhhVE05ICYuhJ"/>
+  <line x1="950" y1="105" x2="986" y2="105" stroke="#58a6ff" stroke-width="2" marker-end="url(#arr4)" data-page-node-id="bUTnxxX46neAsEzkupUpNt"/>
+  <text x="40" y="185" fill="#8b949e" font-size="12" data-page-node-id="YrJbtWpwxaUHzpwa3KiDMO">失败路径：</text>
+  <rect x="130" y="165" width="230" height="46" rx="8" fill="#2d1518" stroke="#ff7b72" data-page-node-id="ctIS0CCs9HSn4Eg9slgLgQ"/>
+  <text x="245" y="184" text-anchor="middle" fill="#ff7b72" font-size="11.5" data-page-node-id="fBDOeND5BFy24aHqMyFWM6">红线校验失败 → 拒绝执行</text>
+  <text x="245" y="201" text-anchor="middle" fill="#8b949e" font-size="10" data-page-node-id="1E08WQkj6sDcIrNy6pQfbI">把超限字段与上限一并回给模型改写</text>
+  <rect x="390" y="165" width="260" height="46" rx="8" fill="#2d1518" stroke="#ff7b72" data-page-node-id="Dj5EgzGhUELzS98yi69OYL"/>
+  <text x="520" y="184" text-anchor="middle" fill="#ff7b72" font-size="11.5" data-page-node-id="SspgTV0ysodLIZNV5BgMK1">batch 中途失败 → 整体回滚</text>
+  <text x="520" y="201" text-anchor="middle" fill="#8b949e" font-size="10" data-page-node-id="oxVt5iMSRyPLIial3B8dW2">定位到具体命令序号报错，不留半成品文件</text>
+  <rect x="680" y="165" width="410" height="46" rx="8" fill="#1f2a15" stroke="#7ee787" data-page-node-id="ozyxA7Qcv0gCnbAJLejThc"/>
+  <text x="885" y="184" text-anchor="middle" fill="#7ee787" font-size="11.5" data-page-node-id="Zi3Hxq8eormnLR0YCbZQYv">成功 → office_screenshot 渲染回传（见链路②）</text>
+  <text x="885" y="201" text-anchor="middle" fill="#8b949e" font-size="10" data-page-node-id="Uvpl0WUVigAiqONjEmYe5x">同时 events.ts 推 SSE 元事件，侧边栏文件列表刷新</text>
+</svg>
+<div class="figcap" data-page-node-id="xe34xvGkUzGNzvZE9yRws0">图 4 · 链路① PPT 生成主流程（含三条失败/收尾路径）</div>
+</div>
+
+<div class="fig" data-page-node-id="rhaNqwJ9rAPGAcFATtVPwE">
+<svg viewBox="0 0 1120 280" xmlns="http://www.w3.org/2000/svg" data-page-node-id="BCVUJ1z8fo2xc2WZlyrCE9">
+  <defs data-page-node-id="5ZuWwboFSpRvuJXPNxRHAS">
+    <marker id="arr5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" data-page-node-id="a7fwRCD1c0jhajL34HJAU6">
+      <path d="M0,0 L10,5 L0,10 z" fill="#39d2c0" data-page-node-id="7JVPaKqESBBlK7toom8rQX"/>
+    </marker>
+  </defs>
+  <text x="30" y="34" fill="#39d2c0" font-size="14" font-weight="bold" data-page-node-id="h8PFfszlvJVfNxO6i3NkGN">链路 ②：office_screenshot — 视觉自检闭环（模型"看见"自己的产出）</text>
+  <g font-size="12" text-anchor="middle" data-page-node-id="ZLo28fiYx5shD6rh8F6hx0">
+    <rect x="30" y="70" width="180" height="80" rx="10" fill="#1c2333" stroke="#39d2c0" data-page-node-id="7edqEq56f3O3U2wR6xIEIC"/>
+    <text x="120" y="98" fill="#e6edf3" data-page-node-id="1pCtYgrw1LVkQQEyODLPEG">office_screenshot</text>
+    <text x="120" y="116" fill="#8b949e" font-size="10.5" data-page-node-id="eNd49ZV4Fy4xHwUxaKO4NK">渲染当前文档 PNG</text>
+    <text x="120" y="134" fill="#8b949e" font-size="10.5" data-page-node-id="Wfu1870CSl3mEfHlePHisr">（native 走 PowerPoint COM）</text>
+    <rect x="270" y="70" width="190" height="80" rx="10" fill="#1c2333" stroke="#39d2c0" data-page-node-id="3F21JKWFN8GX4sopyy1g80"/>
+    <text x="365" y="98" fill="#e6edf3" data-page-node-id="GkWd3r7ZIGByDsRjrKjOX1">模态能力探测</text>
+    <text x="365" y="116" fill="#8b949e" font-size="10.5" data-page-node-id="vr1PnBGuDqCBtMWhnyDuig">模型声明 image 输入？</text>
+    <text x="365" y="134" fill="#8b949e" font-size="10.5" data-page-node-id="7nuiX9WK2UbIZTYOBKYIXF">未声明 → 降级结构化校验</text>
+    <rect x="520" y="70" width="190" height="80" rx="10" fill="#1c2333" stroke="#39d2c0" data-page-node-id="uJtUf1l0wnab8PVREXgvHQ"/>
+    <text x="615" y="98" fill="#e6edf3" data-page-node-id="ehn5O7MPjNMQyYPdwhAHBV">图片回传对话</text>
+    <text x="615" y="116" fill="#8b949e" font-size="10.5" data-page-node-id="xPpq2xfJEiWgSA4XeV5Yky">ctx.attachments 注入</text>
+    <text x="615" y="134" fill="#8b949e" font-size="10.5" data-page-node-id="3igoojBNzaeaU9AwVRN1bG">模型多模态读图</text>
+    <rect x="770" y="70" width="150" height="80" rx="10" fill="#132a1c" stroke="#7ee787" data-page-node-id="dYx1FKg6jvQpz1F2Af5pIo"/>
+    <text x="845" y="94" fill="#7ee787" data-page-node-id="mRTCAzktRtZ1NrUsISYKNz">8 条自检清单</text>
+    <text x="845" y="112" fill="#8b949e" font-size="10" data-page-node-id="CzcLLIEbf7S7DkHAxbrzZ9">溢出/越界/对比度</text>
+    <text x="845" y="126" fill="#8b949e" font-size="10" data-page-node-id="nBRxFZuPHEVDb56oV6MYFg">对齐/留白/密度</text>
+    <text x="845" y="140" fill="#8b949e" font-size="10" data-page-node-id="uHjdDcbeXs6dxWSJ1a3SdY">层级/一致性</text>
+    <rect x="970" y="70" width="120" height="80" rx="10" fill="#1c2333" stroke="#f0883e" data-page-node-id="s4vnKhvJRwsGGH9XzQb6PS"/>
+    <text x="1030" y="98" fill="#f0883e" data-page-node-id="ElcpkqhfBsFyyHuJvZCDzw">发现问题</text>
+    <text x="1030" y="118" fill="#8b949e" font-size="10.5" data-page-node-id="RFWt3dttS1bJTHxRh6cIXc">office_set/batch</text>
+    <text x="1030" y="134" fill="#8b949e" font-size="10.5" data-page-node-id="g5pRuF0gF1FHkjrCdvGrvx">修正后重截</text>
+  </g>
+  <!-- 循环箭头 -->
+  <path d="M 1030 150 L 1030 205 L 120 205 L 120 154" fill="none" stroke="#39d2c0" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arr5)" data-page-node-id="dqCwBeYsT5UXLhzhpPWPN8"/>
+  <text x="575" y="226" text-anchor="middle" fill="#39d2c0" font-size="11.5" data-page-node-id="L3MaXZ8edX59BvxD4Bmt4b">自修正循环（模型看图 → 改 → 再截图，直到通过清单）</text>
+  <text x="30" y="262" fill="#8b949e" font-size="11" data-page-node-id="vQaQkDyBBldo5PYHRPn7HX">踩坑关联 #7：模型看不到图就不能假装看过 —— 未声明 image 模态的模型（如 glm-4.5-air）自动走降级路径，不做假自检。</text>
+</svg>
+<div class="figcap" data-page-node-id="BNC50Ze3mhyDHG09h5jBi0">图 5 · 链路② 视觉自检闭环</div>
+</div>
+
+<div class="fig" data-page-node-id="G0SKn5jwrhchdrxGhvgYQ8">
+<svg viewBox="0 0 1120 320" xmlns="http://www.w3.org/2000/svg" data-page-node-id="bVHPJRsv6ZHn9yGVs6Kmph">
+  <defs data-page-node-id="0tZO2KiiCTarxYtV3KVZMu">
+    <marker id="arr6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" data-page-node-id="PSNMizY3dJLF1h0iqygnei">
+      <path d="M0,0 L10,5 L0,10 z" fill="#bc8cff" data-page-node-id="7sQjLvAfFm6BGMK3rVHVzA"/>
+    </marker>
+    <marker id="arr6b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" data-page-node-id="zKRkjRJEL5Gfpq2bHhTYuh">
+      <path d="M0,0 L10,5 L0,10 z" fill="#f0883e" data-page-node-id="SqtE5ILppcUSVdo7KEabgO"/>
+    </marker>
+  </defs>
+  <text x="30" y="34" fill="#bc8cff" font-size="14" font-weight="bold" data-page-node-id="VA9GCdjPfAbqbtENJdjY5o">链路 ③：边改边看 — 双通道 SSE 实时预览</text>
+  <g font-size="12" text-anchor="middle" data-page-node-id="aAF1bdFtOGaFZ0ySaQ2sF0">
+    <rect x="30" y="70" width="200" height="90" rx="10" fill="#1c2333" stroke="#bc8cff" data-page-node-id="TPbsYg9pn22Kxh9KywVy5Q"/>
+    <text x="130" y="98" fill="#e6edf3" data-page-node-id="Xt32eMEQAtDsCQlFAjx0CU">侧边栏 iframe</text>
+    <text x="130" y="116" fill="#8b949e" font-size="10.5" data-page-node-id="PjwAGVArlclfQraxKROmSl">加载 watch 页面（经 proxy）</text>
+    <text x="130" y="140" fill="#8b949e" font-size="10.5" data-page-node-id="jweb1n9uEiulA6JhjhBDfo">URL/Host/Origin 改写</text>
+    <rect x="290" y="70" width="220" height="90" rx="10" fill="#1c2333" stroke="#58a6ff" data-page-node-id="E4ZH44UxGSsAJuJsWpTKLg"/>
+    <text x="400" y="98" fill="#e6edf3" data-page-node-id="PbkD15K3pFj1FoiKM11WNY">DSH 工具事件挂钩</text>
+    <text x="400" y="116" fill="#8b949e" font-size="10.5" data-page-node-id="bCHZDNExjqojT4o5XYMYO0">监听 tools/execute</text>
+    <text x="400" y="140" fill="#8b949e" font-size="10.5" data-page-node-id="MRJ382871VqXFdIY4JPhoW">Agent 一动就通知刷新</text>
+    <rect x="570" y="60" width="240" height="110" rx="10" fill="#0f1a14" stroke="#7ee787" data-page-node-id="RfP6DKRnQ80LeyombRAW2B"/>
+    <text x="690" y="86" fill="#7ee787" font-weight="bold" data-page-node-id="DN46Zfe3TbCmWTDw9qkuDs">双通道 SSE</text>
+    <text x="690" y="108" fill="#8b949e" font-size="10.5" data-page-node-id="0CTqC7oYGdlxEL56c2FvEX">通道A：events.ts 插件自有 SSE</text>
+    <text x="690" y="126" fill="#8b949e" font-size="10.5" data-page-node-id="Rp2r9aV9Gc6CJhuBhN2Bob">　　　　→ 元事件（文件列表/状态）</text>
+    <text x="690" y="148" fill="#8b949e" font-size="10.5" data-page-node-id="kbkYXkgQCoRhwfoxqkjtup">通道B：OfficeCLI watch SSE</text>
+    <text x="690" y="162" fill="#8b949e" font-size="10.5" data-page-node-id="tYXMpQT3igcinWvSEaHbPj">　　　　→ 文档内容实时刷新</text>
+    <rect x="870" y="70" width="220" height="90" rx="10" fill="#241a0f" stroke="#f0883e" data-page-node-id="JLfdSlcs3MDZzd2wivLU92"/>
+    <text x="980" y="98" fill="#f0883e" data-page-node-id="FQiCjchjwFuClK8IVa4oQA">OfficeCLI watch 子进程</text>
+    <text x="980" y="116" fill="#8b949e" font-size="10.5" data-page-node-id="mKeFQzfw5mHUfbqSG6QpO7">watch.ts 管理生命周期</text>
+    <text x="980" y="140" fill="#8b949e" font-size="10.5" data-page-node-id="Ou5ohNKSdv51SOtQuZceBm">端口自动分配（watchPort=0）</text>
+  </g>
+  <line x1="230" y1="115" x2="286" y2="115" stroke="#bc8cff" stroke-width="2" marker-end="url(#arr6)" data-page-node-id="jGfB21DikPWbVDJcQhq980"/>
+  <line x1="510" y1="115" x2="566" y2="115" stroke="#bc8cff" stroke-width="2" marker-end="url(#arr6)" data-page-node-id="8JbYNmM3JPBdGmUh3ZstUp"/>
+  <line x1="810" y1="115" x2="866" y2="115" stroke="#f0883e" stroke-width="2" marker-end="url(#arr6b)" data-page-node-id="VQa7twDf1nN0Adf7JUq3MK"/>
+  <path d="M 980 160 L 980 235 L 130 235 L 130 164" fill="none" stroke="#f0883e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr6b)" data-page-node-id="7GBaAsI6FdmxZxYsQ1De06"/>
+  <text x="560" y="256" text-anchor="middle" fill="#8b949e" font-size="11" data-page-node-id="55YneDLHPxn4P3WoyDlmtb">watch 页面内容变更 → 通道B 推送 → iframe 自动刷新（proxy 透传 SSE，HTML 中根相对 URL 需改写，否则 404）</text>
+  <text x="30" y="295" fill="#8b949e" font-size="11" data-page-node-id="MRES7rmIg7yXJDm0fg95I1">踩坑关联 #4：HTML 改写必须"一条规则 + g 标志"，否则 POST /api/selection 打到 DSH 自身 404 而非代理到上游。</text>
+</svg>
+<div class="figcap" data-page-node-id="HDB01Qz0FSgSHGhctSrFoa">图 6 · 链路③ 边改边看预览（插件元事件 + watch 内容刷新双通道）</div>
+</div>
+
+<div class="fig" data-page-node-id="wtGRKh7H0FfdwJuS2X51in">
+<svg viewBox="0 0 1120 260" xmlns="http://www.w3.org/2000/svg" data-page-node-id="FHwKgDrcBjYHJJDh6eS1u9">
+  <defs data-page-node-id="dCtAvDIrbqKYdqZEYaIpYn">
+    <marker id="arr7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" data-page-node-id="LwmXMY20MKg9OiHa3hHbgS">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7ee787" data-page-node-id="kZVp9K09H2GbpFbT8dM8Nk"/>
+    </marker>
+  </defs>
+  <text x="30" y="34" fill="#7ee787" font-size="14" font-weight="bold" data-page-node-id="dxNejFUJA5orGgLLbluf7Y">链路 ④：通用工具调用 — 安全执行与隔离</text>
+  <g font-size="12" text-anchor="middle" data-page-node-id="AtDXsSPO7GXMHSyvOw4d8R">
+    <rect x="30" y="65" width="170" height="85" rx="10" fill="#1c2333" stroke="#58a6ff" data-page-node-id="RyNGsuwjhyMiXqCk73iHj5"/>
+    <text x="115" y="93" fill="#e6edf3" data-page-node-id="qgzIodaSQhO2A6Qm4ELr6O">模型调任一工具</text>
+    <text x="115" y="113" fill="#8b949e" font-size="10.5" data-page-node-id="mrgDbJHutRGKVX7LBTHHXJ">common.ts 公共校验</text>
+    <text x="115" y="131" fill="#8b949e" font-size="10.5" data-page-node-id="xUUAI8atxcCqY3OoROIA9M">文件名黑名单正则</text>
+    <rect x="250" y="65" width="180" height="85" rx="10" fill="#1c2333" stroke="#7ee787" data-page-node-id="wYItPkNyK25WOiNAGfr70m"/>
+    <text x="340" y="93" fill="#e6edf3" data-page-node-id="vAlCmFp7FJipIX0uHBr6mn">workspace.ts 解析落点</text>
+    <text x="340" y="113" fill="#8b949e" font-size="10.5" data-page-node-id="ShTtukBtLW2uZ6zK26e0v2">会话 cwd &gt; 配置目录</text>
+    <text x="340" y="131" fill="#8b949e" font-size="10.5" data-page-node-id="Jov8Ul6VmpdPDMgTlOZk7C">&gt; 系统临时目录</text>
+    <rect x="480" y="65" width="200" height="85" rx="10" fill="#1c2333" stroke="#f0883e" data-page-node-id="uQyRPGwavP05QdcuzZJEdE"/>
+    <text x="580" y="93" fill="#e6edf3" data-page-node-id="k3OEaryorRDKRoxOZD3NRL">service.ts spawn</text>
+    <text x="580" y="113" fill="#8b949e" font-size="10.5" data-page-node-id="tQbYWn3CkiwnCbN8MLznOI">参数数组（无 shell 拼接）</text>
+    <text x="580" y="131" fill="#8b949e" font-size="10.5" data-page-node-id="wBgutSYrmOgAOAS3SPBX9e">超时 30s / batch 60s</text>
+    <rect x="730" y="65" width="170" height="85" rx="10" fill="#241a0f" stroke="#f0883e" data-page-node-id="5ldGdmBJMmihHydVhi2bxw"/>
+    <text x="815" y="93" fill="#f0883e" data-page-node-id="H0yBPIggVh7wUTVLPFRNuc">OfficeCLI 执行</text>
+    <text x="815" y="113" fill="#8b949e" font-size="10.5" data-page-node-id="gmIbUBIbOiQ1RcIugvzSHh">JSON 信封 stdout</text>
+    <text x="815" y="131" fill="#8b949e" font-size="10.5" data-page-node-id="r790bAivW1RJh4NRCEnDFR">结构化结果/错误</text>
+    <rect x="950" y="65" width="140" height="85" rx="10" fill="#1a1224" stroke="#bc8cff" data-page-node-id="wHCOoPOa1s56bHhccG8omd"/>
+    <text x="1020" y="93" fill="#bc8cff" data-page-node-id="rRxaMsMlZThA2vQXG4h5RI">回传模型</text>
+    <text x="1020" y="113" fill="#8b949e" font-size="10.5" data-page-node-id="P1mwEER4JN0jCoCcgjiDTl">结构化结果</text>
+    <text x="1020" y="131" fill="#8b949e" font-size="10.5" data-page-node-id="G3htc4j6fjt6J68Dq8GzPA">+ SSE 元事件广播</text>
+  </g>
+  <line x1="200" y1="107" x2="246" y2="107" stroke="#7ee787" stroke-width="2" marker-end="url(#arr7)" data-page-node-id="6xWCx7aM0uqn378ktLLvAd"/>
+  <line x1="430" y1="107" x2="476" y2="107" stroke="#7ee787" stroke-width="2" marker-end="url(#arr7)" data-page-node-id="blHBz7HEtG1uoQoiCTjud3"/>
+  <line x1="680" y1="107" x2="726" y2="107" stroke="#7ee787" stroke-width="2" marker-end="url(#arr7)" data-page-node-id="ePTGNuw4FDhfGcurAfyqt8"/>
+  <line x1="900" y1="107" x2="946" y2="107" stroke="#7ee787" stroke-width="2" marker-end="url(#arr7)" data-page-node-id="WAcTPC4OM559r55kcsuRW0"/>
+  <text x="560" y="200" text-anchor="middle" fill="#8b949e" font-size="11.5" data-page-node-id="VCaaq6xryrhppJxefRDEjL">安全三件套：① spawn 参数数组杜绝注入　② 会话目录隔离（防跨会话读写）　③ 文件名白名单正则防路径逃逸（同时放行中文/emoji 文件名）</text>
+  <text x="560" y="228" text-anchor="middle" fill="#8b949e" font-size="11.5" data-page-node-id="bYU3ikvfjUB46fIgcSbWai">可选 HTTP：headless profile（无 webServer）下工具照常工作，仅预览/SSE 能力缺失 —— 服务依赖全部 ctx.inject 可选获取</text>
+</svg>
+<div class="figcap" data-page-node-id="9rrb3XskcvcjBePG0e3rb1">图 7 · 链路④ 通用工具调用与安全执行</div>
+</div>
+
+<!-- ============ 6. 双半结构与构建 ============ -->
+<h2 data-page-node-id="KaBsK8oB6V44xCsnGvZMAk"><span class="num" data-page-node-id="fH5RviTjycB3HYBi5Yb1Uw">06</span>双半结构与构建体系</h2>
+<div class="grid2" data-page-node-id="8St0LyAqGGuyqjECU1SHIV">
+  <div class="card" data-page-node-id="AEqwdhseDwIxTsEjj1Wwxt">
+    <div class="kv" data-page-node-id="klW3qyiwR4Sm9fCCC0RInf"><b style="color:var(--accent)" data-page-node-id="vGyOsxUxqKe8FdJxG1x2Dk">宿主半 lib/*.js</b>（tsc 编译）</div>
+    <ul class="clean" data-page-node-id="TQmoiQNY7ZtWqwkTDM2JDI">
+      <li data-page-node-id="mKYar2LepF7BHnwAxxPZoa"><code data-page-node-id="xoXNA02FWDWMCgWC32j5hE">tsconfig.json</code>：ES2022 + NodeNext</li>
+      <li data-page-node-id="7oqbHmLIA0jQLBMQzG6wY3">运行时加载 <b data-page-node-id="AZ5d9tLEMuJAljcD6rSaSv">lib/ 编译产物而非 src/</b> —— 改完源码必须 <code data-page-node-id="JFfQRkGUS7sBEmzX4EGgPr">pnpm build</code> + 重启 DSH（HMR 默认关闭）</li>
+      <li data-page-node-id="eMBUOrJEjRmGdTxwoEXsF5">通过 cordis <code data-page-node-id="OOD2PUAUxFBykGZk9UiEiA">apply()</code> 组装：注入路由、注册工具、启动 watch/proxy</li>
+    </ul>
+  </div>
+  <div class="card" data-page-node-id="K6mBBUZ7MLmJ2ta9o037Y9">
+    <div class="kv" data-page-node-id="7L1x5RYxQ357WpzEffub6C"><b style="color:var(--purple)" data-page-node-id="gb8yrgwZW4F06nBUHGK3aw">客户端半 lib/client.js</b>（tsdown 打包）</div>
+    <ul class="clean" data-page-node-id="CPhQlEOO6QMckaLR9VwEhG">
+      <li data-page-node-id="0Wqd2wTKURc5LwJVBGg8IQ"><code data-page-node-id="kdD5BxEwBvkH8r8msfjoht">client.build.mjs</code> 复刻 <b data-page-node-id="s4GLnbcd21ziIFlclp5n4a">closure-factory 协议</b>（banner/intro/footer）</li>
+      <li data-page-node-id="MoMGBLeoQwFAnzLtsldvsV">外部白名单 require（react / cordis 等）；<b data-page-node-id="1H9JuWI80OYjLRFmSNpIiW"><code data-page-node-id="e27Ka3EcV5zkpmMoTdNXeX">config: false</code> 是硬性要求</b>，否则 react 被内联导致 "Invalid hook call"</li>
+      <li data-page-node-id="EM44IKt1ni4Epi4KAotBgw">package.json 的 <code data-page-node-id="TD5nxD9KMJp4bG4Hj2mwxx">exports</code> 必须含 <code data-page-node-id="kys0ORCeTezg85wO69tLtx">"./package.json"</code>，否则客户端不进启动图（否则 client.js 404）</li>
+      <li data-page-node-id="2uVVqeL6fyTihWqZlj7UMt"><code data-page-node-id="JFjsspmrQ5zbHjxp0MPtDx">dsh.client</code> 声明 inject，注册 <code data-page-node-id="wKiNajosAcopS4SqIdsfqe">sidebar.footer.action</code> 插槽</li>
+    </ul>
+  </div>
+</div>
+
+<div class="card" data-page-node-id="vG4pgGLqbScTvCBQYAKu3t">
+  <div class="kv" data-page-node-id="u6xYeGAfmFFgffHfXaLcWQ"><b data-page-node-id="cJD5zSnZ9UBeSlYUn7zYEq">挂载三步（缺一不可）</b></div>
+  <div class="step" data-page-node-id="JBTZKpnhbNys0jQVFa9VRA"><div class="n" data-page-node-id="Jv67zq4a8lrm0WVR5VWhGn">1</div><div class="t" data-page-node-id="1kGHb0enK4ycndFij8HpH8"><span class="mono" data-page-node-id="QZ4nFyddkFAx9jxfo1khRo">plugin --profile web add &lt;插件目录&gt;</span> — 安装插件包</div></div>
+  <div class="step" data-page-node-id="Ne13AWeBpHCBVDRiqIUv6Z"><div class="n" data-page-node-id="NoIlnJudR4lZY4ibTmWf66">2</div><div class="t" data-page-node-id="eoDhA0sy9V2RPSXxqfDmTl">编辑 <code data-page-node-id="cGy9tPP0plVxKUZQOytFkZ">cordis.patch.yml</code> 插入 <span class="mono" data-page-node-id="UYC4s6oIxnqeOqfeqYDnFm">id: dsh-officecli</span> 及 config（officecliPath / workspaceDir / watchPort / commandTimeoutMs=30000 / batchTimeoutMs=60000）</div></div>
+  <div class="step" data-page-node-id="czvxrR9xLxm4MsjGORG4H9"><div class="n" data-page-node-id="gP3uGKTCcRDaELosCfwqWp">3</div><div class="t" data-page-node-id="4XTDiDvRPYFIxawFnToVeg"><code data-page-node-id="lGCv0LrA0WPUIWLP5owfvq">pnpm dsh web</code> 启动；验证：<code data-page-node-id="DyyR78EtNAzwEbsBCOPTSI">curl /api/officecli/files?session=probe</code>，路由判定看 Content-Type（json=在册 / text/plain=落 SPA fallback 未注册）</div></div>
+</div>
+
+<!-- ============ 7. 工程决策 ============ -->
+<h2 data-page-node-id="3jDV4S91lnVMfSqesl8N7l"><span class="num" data-page-node-id="yk94kz55tzfaSvtp0OK1FC">07</span>关键设计决策与踩坑（10 条）</h2>
+<div class="card" data-page-node-id="UEaLK7K2ETBBF0zkkHu644">
+<div class="grid2" data-page-node-id="g6BMlwDTmjHXK9oxAIhAs8">
+  <div class="kv" data-page-node-id="3TLsATPgTnbKbupZYcm5HT"><b data-page-node-id="XaKTtaB2af9KStCKBdOCrU">① 可选服务必须 ctx.inject</b><br data-page-node-id="jbgpR6rvGv2o8QKu6eCFBj">不能在 apply() 里同步 get('webServer')，否则路由永不注册 —— 依赖注入的时序纪律</div>
+  <div class="kv" data-page-node-id="m8RXzPAhFWoPSfJhgfQWeo"><b data-page-node-id="dmHVsaWczk7QwWGGzHBlcW">② roundRect 的 guide 名是 adj 不是 adj1</b><br data-page-node-id="qXsiDWsnB7Gbfrp1idFY0o">写错导致 PowerPoint 判定文件损坏（HRESULT 0x80070570），且 officecli 自查不出</div>
+  <div class="kv" data-page-node-id="hbtiEAyKtDU7C36nHWMKDU"><b data-page-node-id="ZhKdVgjgoW3YW4qAbGqdgN">③ 长度必须带单位、不用 zorder</b><br data-page-node-id="t7ZWAtezqh7VrrgvcZbiYn">裸数字被当 EMU；zorder 值越大越靠后，背景改用插入顺序置底</div>
+  <div class="kv" data-page-node-id="1WUhQFoArphhlOiF1HJsHw"><b data-page-node-id="nXufwi14dUrC0cWm1m9TL9">④ HTML 改写"一条规则 + g 标志"</b><br data-page-node-id="KO5lDZ1wzvyUVSRdt5Zz6y">否则 POST /api/selection 打到 DSH 自身 404，修复后正确代理到上游 204</div>
+  <div class="kv" data-page-node-id="0rpwnemRm53AKKkROGO7Cd"><b data-page-node-id="rPuPdSjFfKH2WOO2VPL4yZ">⑤ 中文文件名黑名单正则</b><br data-page-node-id="AkRgJfgCdJq0MKFbJ30ph6">放弃白名单，改 <span class="mono" data-page-node-id="5CBHxMgcrMBc4sWKzqgEhe">/^[^\\/:*?"<>|\r\n]+\.(docx|xlsx|pptx)$/i</span>，放行 CJK/emoji</div>
+  <div class="kv" data-page-node-id="VPgtDKcTxuXsdNOOFMjLkq"><b data-page-node-id="OA84m9ZLnspymXxGSNYOZq">⑥ workspaceDir 必须绝对路径</b><br data-page-node-id="dHFsbwzL1gb4NFmrn6biXa">相对路径导致 <span class="mono" data-page-node-id="dVkXBvF9F9RPwACBRQKj7w">&lt;sid&gt;/&lt;sid&gt;/</span> 重复层级</div>
+  <div class="kv" data-page-node-id="P5ZDHAh3nMslVXX6l8WJQ0"><b data-page-node-id="JVNXJbqldAvpcrUbZnMG3i">⑦ 模型看不到图不能假装看过</b><br data-page-node-id="31YTQFFgW3O5a9UlIvSfWq">screenshot 探测 image 模态，未声明则降级结构化校验</div>
+  <div class="kv" data-page-node-id="9BM4nkO1qyRFogCZig3TIu"><b data-page-node-id="Szb5wVIZIMPWWR1qr5ucLz">⑧ 追加页必须继承原配色</b><br data-page-node-id="tqCjjIjUwqD2wlHsftBa2X">inferTheme() 从 format 属性还原主题，防追加页突然换肤</div>
+  <div class="kv" data-page-node-id="h5B25qE8FwSTXEH7kvzjBP"><b data-page-node-id="jKdkqkum2n7nOID2GyS3pv">⑨ 设计指南结构化分段</b><br data-page-node-id="eM1DA27tHogWqn1LmkF3rW">guideSections() 按 key 组织，防上下文切分把契约切碎</div>
+  <div class="kv" data-page-node-id="pyTm8AfHLW6S4e2c4qqIp6"><b data-page-node-id="Gh22c7xRDYYCrxGVFlv1K7">⑩ batch 是原子事务</b><br data-page-node-id="1tEmtbP0W1FYItH6iGc79q">临时副本全成功才 Replace，失败可定位具体命令 —— 副本先行而非日志回放</div>
+</div>
+</div>
+
+<!-- ============ 8. 总结 ============ -->
+<h2 data-page-node-id="Afj4p9HU6Z07zSYRaDl7uh"><span class="num" data-page-node-id="BO1cm4qAjk6cfFPtqZKHgG">09</span>设计思路总结</h2>
+<div class="grid3" data-page-node-id="dE1yStxLwjGG8PxKGCqJ7w">
+  <div class="card" data-page-node-id="BtCr31bHnjv2SUDIhdH0NF">
+    <div class="kv" data-page-node-id="PPAtnPbejAXnyM6O5a5cMo"><b style="color:var(--accent)" data-page-node-id="7wKBTpTN5xqpGGNP450BC7">核心抽象</b></div>
+    <div class="kv" style="margin-top:6px" data-page-node-id="VqjmvDic4FDo9h4637oXyK"><b data-page-node-id="kYjoiezklLhoUjquE6P9H7">设计编译层</b>：把"模型不会排版数学"这个问题从提示工程层面（求模型算准坐标）转为架构层面（模型声明意图，代码算坐标）。DeckSpec 是模型与排版细节之间的契约边界。</div>
+  </div>
+  <div class="card" data-page-node-id="AEEBzkk7tdfWCJbTjuurTv">
+    <div class="kv" data-page-node-id="rzn3MfE7BoN07H9b1BwnBc"><b style="color:var(--accent2)" data-page-node-id="n4oGgrITMfG9E1udvdGD5b">质量闭环</b></div>
+    <div class="kv" style="margin-top:6px" data-page-node-id="rRy9eRqX6DUYyCxWUl2QZD"><b data-page-node-id="CuLayZyHw7ljW2PJsp8BPf">字数红线（前置抑制）+ 截图自检（事后验证）</b>双保险：红线在生成前约束输入，截图在生成后让模型视觉校验 —— 唯一依赖是模型需声明 image 模态，不支持则诚实降级。</div>
+  </div>
+  <div class="card" data-page-node-id="oFQThHOElm1l8BzjIYvG9t">
+    <div class="kv" data-page-node-id="MTg9gSLs3QvOEkqdjSaz9b"><b style="color:var(--warn)" data-page-node-id="62XRrvykRpEI43jI78NhlQ">工程纪律</b></div>
+    <div class="kv" style="margin-top:6px" data-page-node-id="oVzpOonI1EhnLaWxErWjVo"><b data-page-node-id="nRcxUdGqmQH6Vi0Ae4ZiqQ">安全</b>（spawn 数组/会话隔离/文件名防逃逸）、<b data-page-node-id="MYlcFkqw6Qwr4QElTkpjja">原子性</b>（batch 副本先行）、<b data-page-node-id="cTCgOmglTfZqtDcvpWfgAF">诚实性</b>（能力探测降级而非假装成功）、<b data-page-node-id="9OpBWYAvffsFQZFr9E6sX9">原子替换</b> —— 每条踩坑都沉淀为可复用约束而非一次性补丁。</div>
+  </div>
+</div>
+<div class="card" data-page-node-id="eOPfjDMmIJAFDhTYCM21Tc">
+  <div class="kv" data-page-node-id="ni1eDX4uwqZBiYUHmLyrB4"><b data-page-node-id="DaoulG8I27M3EFT4YlaNCa">已知限制</b>：视觉自检依赖模型 image 模态（glm-4.5-air / glm-4.7 未声明，需配 glm-4.6v 等）；native 渲染依赖本机 PowerPoint COM；docx/xlsx 无设计层（模型自组织结构）；watch 有空闲超时与进程残留可能；HMR 默认关闭（改源码必须重新 build）。</div>
+</div>
+
+<div style="text-align:center;color:var(--muted);font-size:12px;margin-top:48px" data-page-node-id="ZBYnzl0brM2jp4RMIptEDY">dsh-officecli 架构分析 · 基于仓库 README 与源码结构整理 · 2026-09</div>
+</div>
+</body>
+</html>

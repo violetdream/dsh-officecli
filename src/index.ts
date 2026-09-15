@@ -8,6 +8,7 @@ import { WatchManager } from './watch.js'
 import { EventBus } from './events.js'
 import { registerRoutes, type PluginDeps } from './routes.js'
 import { registerTools } from './tools/index.js'
+import { refreshTemplates } from './pptx/templates.js'
 
 export interface Config {
   officecliPath: string
@@ -50,6 +51,18 @@ export function apply(ctx: Context, config: Config): void {
     webCtx.logger.info('dsh-officecli: HTTP 预览接口已挂载 /api/officecli')
   })
   registerTools(ctx, deps)
+
+  // 用户自定义模板（~/.dsh/officecli/templates.json 等）：启动时先扫一遍，
+  // 让日志能回答"到底加载了几套"；会话级的项目模板在工具调用时按 cwd 增量重载。
+  {
+    const r = refreshTemplates()
+    if (r.count > 0 || r.errors.length > 0) {
+      ctx.logger.info(
+        `dsh-officecli: 已加载 ${r.count} 套自定义模板${r.errors.length ? `（${r.errors.length} 处错误）` : ''}`,
+      )
+      for (const err of r.errors.slice(0, 3)) ctx.logger.warn(`dsh-officecli: 模板错误 ${err}`)
+    }
+  }
 
   // 边改边看：挂钩 DSH 工具执行事件（tools/execute 是 around-dispatch 包装，
   // tools/result 是只读最终结果），把 office_* 工具的运行状态广播给预览面板。

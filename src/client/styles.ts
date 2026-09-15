@@ -135,6 +135,38 @@ export const styles = {
     fontSize: '13px',
     lineHeight: '18px',
   },
+  /** 跟随开关：做成小胶囊，开启态用主色强调。 */
+  followChip: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    height: 24,
+    padding: '0 8px',
+    border: '1px solid var(--dsw-alias-border-l2)',
+    borderRadius: 12,
+    background: 'transparent',
+    color: 'var(--dsw-alias-label-tertiary)',
+    fontSize: '11px',
+    lineHeight: '16px',
+    cursor: 'pointer',
+    transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+  },
+  followChipOn: {
+    color: 'var(--dsw-alias-state-business-primary)',
+    borderColor: 'var(--dsw-alias-state-business-primary)',
+    background: 'color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent)',
+  },
+  /** 工具栏右段：最后更新时间 + 跟随开关。 */
+  toolbarMeta: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '5px 14px',
+    fontSize: '11px',
+    lineHeight: '16px',
+    color: 'var(--dsw-alias-label-tertiary)',
+    borderBottom: '1px solid var(--dsw-alias-border-l1)',
+  },
 } as const
 
 /** 面板外操作按钮（侧栏 footer action）与宿主视觉一致。 */

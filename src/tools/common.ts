@@ -66,6 +66,23 @@ export function notify(
         tool: opts.tool ?? 'unknown',
         ...(opts.detail ? { detail: opts.detail } : {}),
       })
+      // 跟随模式：让预览面板跟着 Agent 的笔走。这里刻意不等 await ——
+      // 工具结果不应该被预览的 I/O 拖住，慢了最多是面板晚几百毫秒刷新。
+      const file = opts.file
+      const abs = deps.workspace.resolve(sessionId, file, cwd)
+      void deps.watch.applyUpdate(sessionId, abs).then(
+        (res) => {
+          if (res) {
+            deps.events.broadcast(sessionId, {
+              type: 'watch-switched',
+              session: sessionId,
+              file,
+              port: res.port,
+            })
+          }
+        },
+        () => {},
+      )
     }
   } catch { /* 事件广播失败不影响工具结果 */ }
 }

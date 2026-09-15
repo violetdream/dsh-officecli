@@ -1,0 +1,39 @@
+{
+  "_comment": "自定义模板样例。复制到 ~/.dsh/officecli/templates.json（全局）或项目目录 .dsh/officecli/templates.json（项目级）即可生效，无需重启插件。也可以直接用环境变量指向：DSH_OFFICECLI_TEMPLATES=<本文件路径>",
+  "templates": [
+    {
+      "id": "corp-vi",
+      "name": "公司标准汇报",
+      "description": "深蓝主色 + 金色强调 + 页脚细线，继承 consulting 版式与页码",
+      "extends": "consulting",
+      "theme": "business-blue",
+      "contentDecor": { "rail": true, "footerRule": true },
+      "layouts": ["cover", "agenda", "bullets", "cards", "kpi", "timeline", "table", "ending"],
+      "style": {
+        "colors": { "primary": "#0B4F9E", "accent": "#C8A45C" },
+        "fonts": { "title": "微软雅黑", "body": "等线" },
+        "typography": { "scale": 1.05 }
+      }
+    },
+    {
+      "id": "edu-warm",
+      "name": "暖橙课件",
+      "description": "暖橙 + 页码徽章，适合培训/教学场景",
+      "extends": "training-course",
+      "style": {
+        "colors": { "primary": "#D96A1B" },
+        "typography": { "pageTitle": 30 }
+      }
+    },
+    {
+      "id": "pitch-dark",
+      "name": "深色路演",
+      "description": "主色 hex 直接派生整套配色，无需内置主题 id",
+      "theme": "#0F5EA6",
+      "transition": "push",
+      "pageNumber": false,
+      "contentDecor": { "corner": true, "footerRule": true },
+      "layouts": ["cover", "kpi", "compare", "roadmap", "ending"]
+    }
+  ]
+}

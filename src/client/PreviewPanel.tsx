@@ -20,6 +20,7 @@ const TYPE_ICON = {
 } as const
 const formatSize = (b: number) => (b < 1024 ? `${b}B` : b < 1048576 ? `${(b/1024).toFixed(1)}KB` : `${(b/1048576).toFixed(1)}MB`)
 const formatTime = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+const FOLLOW_KEY = 'dsh-officecli:follow'
 
 /** 订阅当前会话 id：sessions.list 快照里的 `current`（sessions 服务不可用时退化为 null，不崩）。 */
 function useCurrentSession(ctx: ClientContext): string | null {
@@ -43,8 +44,15 @@ export function PreviewPanel({ ctx, onClose, wide }: { ctx: ClientContext; onClo
   // 边改边看：Agent 正在运行哪个 office_* 工具（忙碌指示）；每文件的生成详情（页数等）
   const [busy, setBusy] = useState<string | null>(null)
   const [detail, setDetail] = useState<Record<string, { pageCount?: number; layouts?: string[]; template?: string }>>({})
+  // 跟随开关：开启后 Agent 每改一次文件，预览自动切到那个文件并重载
+  const [follow, setFollow] = useState<boolean>(() => localStorage.getItem(FOLLOW_KEY) !== '0')
+  // iframe 重载计数器：URL 不变时（watch 原地 switch）靠它强制重建
+  const [reloadKey, setReloadKey] = useState(0)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number>(0)
   // 当前选中文件的实时引用：SSE 回调里判断「是否已在预览」，避免抢走用户正在看的文件
   const selectedRef = useRef<string | null>(null)
+  const followRef = useRef(follow)
+  followRef.current = follow
 
   const panelStyle = useMemo(() => ({ ...(wide ? styles.panel : { ...styles.panel, ...styles.panelRail }) }), [wide])
 
@@ -58,6 +66,7 @@ export function PreviewPanel({ ctx, onClose, wide }: { ctx: ClientContext; onClo
     setError(null)
     setBusy(null)
     setDetail({})
+    setLastUpdatedAt(0)
   }, [sessionId])
 
   // 拉取文件列表
@@ -80,6 +89,63 @@ export function PreviewPanel({ ctx, onClose, wide }: { ctx: ClientContext; onClo
     void loadFiles(sessionId)
   }, [sessionId, loadFiles])
 
+  /** 同步跟随开关到宿主（宿主据此决定是否把 watch 切到 Agent 刚改的文件）。 */
+  const syncFollow = useCallback(async (sid: string, enable: boolean, file?: string | null) => {
+    try {
+      await fetch(`/api/officecli/follow?session=${encodeURIComponent(sid)}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enable, file: file ?? null }),
+      })
+    } catch { /* 跟随只是增强，失败不影响预览 */ }
+  }, [])
+
+  // 会话建立后向宿主声明跟随状态；同时取回当前预览目标（刷新页面后能续上）
+  useEffect(() => {
+    if (!sessionId) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await fetch(`/api/officecli/watch-status?session=${encodeURIComponent(sessionId)}`)
+        if (!res.ok) return
+        const st: { running: boolean; following: boolean; file: string | null } = await res.json()
+        if (cancelled) return
+        await syncFollow(sessionId, followRef.current, st.file)
+        if (st.running && st.file) {
+          const name = st.file.split(/[\\/]/).pop() ?? st.file
+          selectedRef.current = name
+          setSelectedFile(name)
+          setIframeUrl(`${'/api/officecli/watch'}/${sessionId}/`)
+          setReloadKey((k) => k + 1)
+        }
+      } catch { /* 忽略 */ }
+    })()
+    return () => { cancelled = true }
+  }, [sessionId, syncFollow])
+
+  /**
+   * 选中文件并（必要时）强制重载 iframe。
+   * @param forceReload - watch 已在宿主侧切换目标时，URL 不变也必须重载才看得到新内容。
+   */
+  const selectFile = useCallback(async (sid: string, name: string, forceReload = false) => {
+    selectedRef.current = name
+    setSelectedFile(name)
+    setError(null)
+    try {
+      const res = await fetch(`/api/officecli/watch?session=${encodeURIComponent(sid)}&file=${encodeURIComponent(name)}`)
+      if (!res.ok) throw new Error(`预览服务启动失败: HTTP ${res.status}`)
+      const { url }: { url: string } = await res.json()
+      if (!url) throw new Error('预览服务未返回地址')
+      // url 变化时重建 iframe；同一 url（/api/switch 原地切换）不自动重载，
+      // 除非调用方明确要求 —— 避免每次工具调用都闪一下。
+      setIframeUrl((prev) => (prev === url ? prev : url))
+      if (forceReload) setReloadKey((k) => k + 1)
+    } catch (e) {
+      setError((e as Error).message)
+      setIframeUrl(null)
+    }
+  }, [])
+
   // SSE 订阅：工具写文件后宿主广播，面板自动刷新
   useEffect(() => {
     if (!sessionId) return
@@ -100,48 +166,39 @@ export function PreviewPanel({ ctx, onClose, wide }: { ctx: ClientContext; onClo
           const name = event.file
           setUpdated((prev) => new Set(prev).add(name))
           window.setTimeout(() => setUpdated((prev) => { const next = new Set(prev); next.delete(name); return next }), 1200)
+          setLastUpdatedAt(Date.now())
           if (event.detail) {
             setDetail((prev) => ({ ...prev, [name]: event.detail ?? {} }))
           }
-          // 边改边看：生成类工具（带页数详情）无条件打开预览；其他编辑仅在
-          // 当前没在看任何文件时自动打开，绝不抢走用户正在预览的文件
-          if (event.detail?.pageCount !== undefined || selectedRef.current === null) {
-            void selectFile(name)
-          }
+          // 边改边看：跟随开启时无条件切过去并重载（用户在等这一屏）；
+          // 关闭时只在「当前就在看这个文件」的前提下重载，绝不抢屏
+          if (followRef.current) void selectFile(sessionId, name, true)
+          else if (selectedRef.current === name) setReloadKey((k) => k + 1)
+        } else if (event.type === 'watch-switched' && event.file) {
+          // 宿主已经把 watch 切过去了，这里同步选中 + 重载
+          void selectFile(sessionId, event.file, true)
+          setLastUpdatedAt(Date.now())
         } else if (event.type === 'tool-state' && event.state && event.tool) {
           if (event.state === 'running') setBusy(event.tool)
           else if (event.state === 'done' || event.state === 'failed') setBusy((prev) => (prev === event.tool ? null : prev))
         } else if (event.type === 'watch-started' && event.file) {
-          if (selectedRef.current === null) void selectFile(event.file)
+          if (selectedRef.current === null) void selectFile(sessionId, event.file)
         }
       } catch { /* 忽略心跳等非 JSON 帧 */ }
     }
     es.onerror = () => es.close()
     return () => es.close()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId])
-
-  // 选中文件：向宿主申请 watch 会话（拿到预览 URL）
-  const selectFile = async (name: string) => {
-    if (!sessionId) return
-    selectedRef.current = name
-    setSelectedFile(name)
-    setError(null)
-    try {
-      const res = await fetch(`/api/officecli/watch?session=${encodeURIComponent(sessionId)}&file=${encodeURIComponent(name)}`)
-      if (!res.ok) throw new Error(`预览服务启动失败: HTTP ${res.status}`)
-      const { url }: { url: string } = await res.json()
-      if (!url) throw new Error('预览服务未返回地址')
-      // url 变化时重建 iframe；同一 url（/api/switch 原地切换）不重载，避免闪烁
-      setIframeUrl((prev) => (prev === url ? prev : url))
-    } catch (e) {
-      setError((e as Error).message)
-      setIframeUrl(null)
-    }
-  }
+  }, [sessionId, selectFile])
 
   const refresh = () => {
     if (sessionId) void loadFiles(sessionId)
+  }
+
+  const toggleFollow = () => {
+    const next = !follow
+    setFollow(next)
+    localStorage.setItem(FOLLOW_KEY, next ? '1' : '0')
+    if (sessionId) void syncFollow(sessionId, next, selectedRef.current)
   }
 
   return (
@@ -162,7 +219,28 @@ export function PreviewPanel({ ctx, onClose, wide }: { ctx: ClientContext; onClo
           </button>
         </div>
       </div>
-      <div style={styles.sessionBar}>{sessionId ? `会话 ${sessionId.slice(0, 20)}…` : '未连接到会话'}</div>
+      <div style={styles.toolbarMeta}>
+        <span style={{ marginRight: 'auto' }}>
+          {sessionId ? `会话 ${sessionId.slice(0, 20)}…` : '未连接到会话'}
+          {lastUpdatedAt ? ` · 更新于 ${formatTime(lastUpdatedAt)}` : ''}
+        </span>
+        <button
+          type="button"
+          onClick={toggleFollow}
+          title="开启后 Agent 每次改动都自动跳到那个文件；关闭则锁定当前预览"
+          style={{ ...styles.followChip, ...(follow ? styles.followChipOn : {}) }}
+        >
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: 3,
+              backgroundColor: follow ? 'currentColor' : 'var(--dsw-alias-label-dimmed, #bbb)',
+            }}
+          />
+          {follow ? '跟随中' : '已锁定'}
+        </button>
+      </div>
       {busy ? (
         <div style={styles.busy}>
           <StateDot state="ongoing" size={8} />
@@ -187,7 +265,7 @@ export function PreviewPanel({ ctx, onClose, wide }: { ctx: ClientContext; onClo
             return (
               <div
                 key={f.name}
-                onClick={() => void selectFile(f.name)}
+                onClick={() => void selectFile(sessionId!, f.name, true)}
                 onMouseOver={(e) => { if (!isActive) e.currentTarget.style.background = styles.fileItemHover.backgroundColor }}
                 onMouseOut={(e) => { if (!isActive) e.currentTarget.style.background = 'none' }}
                 style={{
@@ -207,7 +285,7 @@ export function PreviewPanel({ ctx, onClose, wide }: { ctx: ClientContext; onClo
         <div style={styles.error}>错误: {error}</div>
       ) : iframeUrl && selectedFile ? (
         <iframe
-          key={`${sessionId ?? ''}/${selectedFile}`}
+          key={`${sessionId ?? ''}/${selectedFile}/${reloadKey}`}
           src={iframeUrl}
           title="Office 预览"
           style={styles.iframe}

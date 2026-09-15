@@ -48,9 +48,11 @@ OfficeCLI 是一个「没有布局引擎」的命令行工具——官方原话�
 
 | 特性 | 说明 |
 |---|---|
-| **15 个 AI 工具** | 12 个底层原语工具 + 3 个高层 PPT 工具，覆盖文档全生命周期 |
-| **PPT 设计层** | 960×540pt 画布、12 栏网格、8pt 基线、8 套主题、15 种版式模板、6 套专业模板；坐标与字号由插件计算 |
-| **模板库** | `deck.template` 一键套用专业感外衣（咨询简报/产品发布/学术答辩/极简/政务报告/年度报告），含内容页装饰、页码格式与默认转场 |
+| **16 个 AI 工具** | 12 个底层原语工具 + 4 个高层 PPT 工具（含 `office_deck_lint`），覆盖文档全生命周期 |
+| **PPT 设计层** | 960×540pt 画布、12 栏网格、8pt 基线、8 套主题、19 种版式模板、12 套专业模板；坐标与字号由插件计算 |
+| **原生元素层** | 除 `shape` 外接入 officecli 的 `chart`（18 种图表）/ `table` / `picture` / `diagram`（mermaid）/ `connector` / `animation` / `notes` 七类原生元素，图表表格不再是手拼形状 |
+| **设计门禁** | 字数上下限、叙事角色预算、非对称占比、数据必须落点；`office_deck_lint` 在生成前后做结构化体检 |
+| **模板库** | `deck.template` 一键套用专业感外衣（咨询简报/产品发布/学术答辩/极简/政务报告/年度报告…），含内容页装饰、页码格式与默认转场；支持 `templates.json` 外置自定义与企业 VI |
 | **样式协议** | `deck.style` 注入演示文稿元数据、默认转场、默认背景、`"{n} / {total}"` 页码格式；每页可单独覆盖背景/转场/隐藏 |
 | **--prop 富注入** | 形状级支持渐变/图案/不透明度/线宽线型/箭头/字距/高亮/大小写/列表/链接等 20+ 项 OfficeCLI 属性面 |
 | **字数红线** | 逐字段的字数上限随设计指南下发给模型，从源头抑制溢出 |
@@ -200,7 +202,26 @@ curl -s -D - -o /dev/null "http://127.0.0.1:3080/api/officecli/zzz"
 1. 点击 DSH Web UI 侧栏底部的「📄 Office 预览」按钮（宽/窄两种形态自适应）
 2. 面板上半部分是当前会话的文档列表（含类型、大小、修改时间）
 3. 点击任一文件，下半部分 iframe 加载 OfficeCLI watch 页面
-4. Agent 编辑文档后，列表项会高亮闪烁，iframe 内容自动刷新（走 SSE，不重载页面）
+4. Agent 编辑文档后，列表项会高亮闪烁，预览自动刷新（免手动刷新）
+
+### 7.1.1 跟随模式（边改边看）
+
+工具栏右侧的胶囊按钮在 **跟随中 / 已锁定** 之间切换（选择按会话记在 localStorage）：
+
+| 状态 | 行为 |
+|---|---|
+| **跟随中**（默认） | Agent 每改一次文件，预览就自动跳到那个文件并重载 —— 对话里改一页，右边马上看到 |
+| **已锁定** | 锁定当前预览的文件；Agent 改别的文件时列表照常高亮，但不抢用户的屏 |
+
+刷新的可靠性来自三步：
+
+1. 工具写盘后 `notify()` 广播 `file-updated`，同时 `WatchManager.applyUpdate()` 介入；
+2. 正在看的就是被改的文件 → 向 watch 服务器 `POST /api/switch` **指向同一个文件**。
+   officecli watch 自述「external edits are not detected」，而插件是独立进程改盘写回的，
+   等它自己发现并不可靠；实测 switch 同文件会重新打开文档（`status.version` 归零并广播
+   update），等于一次确定的刷新；
+3. 客户端收到 `file-updated` / `watch-switched` 后 bump iframe 的 key 强制重建，
+   双保险，不依赖 watch 自己的 SSE 是否触发。
 
 ### 7.2 对话调用
 
@@ -241,6 +262,17 @@ curl -s -D - -o /dev/null "http://127.0.0.1:3080/api/officecli/zzz"
     { "layout": "ending" }
   ]
 }
+```
+
+用户的口语要求可以直接落进参数，不必先让模型查表：
+
+```
+"生成一份科技蓝风格的 PPT"        → deck.theme = "科技蓝风格"（解析为 tech-cyan）
+"用我们公司的主色 #0F5EA6"        → deck.theme = "#0F5EA6"（派生整套配色）
+"字能不能再大点"                  → deck.style = {"typography":{"scale":1.12}}
+"标题换成微软雅黑"                → deck.style = {"fonts":{"title":"微软雅黑"}}
+"背景深色一点"                    → deck.style = {"background":"#0F172A"}
+"按公司的汇报模板来"              → deck.template = "corp-vi"（用户自定义模板）
 ```
 
 ---
@@ -294,14 +326,15 @@ curl -s -D - -o /dev/null "http://127.0.0.1:3080/api/officecli/zzz"
 
 > `office_*` 工具执行成功后都会广播 `file-updated` 元事件，侧边栏据此高亮闪烁。
 
-### 9.2 高层 PPT 工具（3 个）
+### 9.2 高层 PPT 工具（4 个）
 
 排版数学由插件承担，模型只填内容。
 
 | 工具 | 参数 | 说明 |
 |---|---|---|
-| `office_design_guide` | section? | 返回模板清单、主题清单、叙事结构、字数红线、字号阶梯、DeckSpec 契约、视觉自检清单。`section` 可取 `templates` / `themes` / `story` / `limits` / `scale` / `spec` / `checklist` |
-| `office_deck_create` | filename, deck, overwrite? | 一步生成整份 `.pptx`。`deck` 为 DeckSpec 对象（也容忍 JSON 字符串），支持 `template` / `style` / 单页样式覆盖 |
+| `office_design_guide` | section? | 返回模板清单、主题清单、**可用元素能力**、**叙事与密度门禁**、字数红线、字号阶梯、DeckSpec 契约、视觉自检清单。`section` 可取 `templates` / `themes` / `style` / `custom` / `elements` / `story` / `limits` / `scale` / `spec` / `checklist` |
+| `office_deck_create` | filename, deck, overwrite? | 一步生成整份 `.pptx`。`deck` 为 DeckSpec 对象（也容忍 JSON 字符串），支持 `template` / `style` / 单页样式覆盖 / 演讲者备注 / 入场动画。**生成前自动跑结构体检**，错误级问题直接拦下 |
+| `office_deck_lint` | deck | 只体检不生成：密度下限、版式多样性、非对称占比、数据落点、配图存在性。返回 error / warning 两级 |
 | `office_slide_add` | filename, slides, at?, theme? | 往已有 PPT 追加页面，**默认自动沿用原文件配色** |
 
 ---
@@ -356,7 +389,23 @@ curl -s -D - -o /dev/null "http://127.0.0.1:3080/api/officecli/zzz"
 
 主题会通过 `themeToProps()` 编译成 `set / --prop theme.color.* --prop theme.font.*` 落到 PPT 的 theme part 上。
 
-### 10.4 版式模板（15 种）
+#### 口语也能指定配色
+
+`deck.theme` 不只是 id，`resolveTheme()` 按四步递进解析：
+
+1. **精确 id** —— `tech-cyan`（大小写/分隔符容错，"Business Blue" 也能中）；
+2. **别名 / 关键词** —— "科技蓝风格"、"政务红"、"深色科技"、"黑金"（最长子串优先，
+   所以"科技蓝"命中 tech-cyan 而不是 business-blue 的单字"蓝"）；
+3. **十六进制主色** —— `"#0F5EA6"` 会当场按色轮派生整套配色（辅色 +32°、强调色接近补色、
+   底色按明暗取极值），编号 `custom-<hex>`；
+4. 都识别不了才回落到默认主题。
+
+所以用户在对话里说"要那种科技蓝的感觉"，模型把原话填进 `deck.theme` 就能真的生效，而不是
+像以前那样静默退回商务蓝。`office_design_guide` 的 themes 节会把这张对照表下发给模型。
+
+### 10.4 版式模板（19 种）
+
+前 15 种是纯形状版式；后 4 种是**元素型版式**，会下发 officecli 的原生 chart / picture / diagram 元素（见 10.4.1）。
 
 | layout | 字段契约 |
 |---|---|
@@ -369,18 +418,60 @@ curl -s -D - -o /dev/null "http://127.0.0.1:3080/api/officecli/zzz"
 | `compare` | `title`, `left:{title, points:[]}`, `right:{...}`（每边 1–6 点） |
 | `timeline` | `title`, `events:[{date, title, desc?}]`（1–5 个节点） |
 | `quote` | `quote`, `author?`, `role?` |
-| `table` | `title`, `headers:[]`, `rows:[[],[]]`（列 ≤5、行 ≤8） |
+| `table` | `title`, `headers:[]`, `rows:[[],[]]`（列 ≤5、行 ≤8）— **原生表格**，主色表头 + 交替行 |
 | `agenda` | `title`, `items:[{title, desc?}]`（1–6 章节目录，编号芯片） |
 | `swot` | `title`, `s:[]`, `w:[]`, `o:[]`, `t:[]`（每象限 1–4 条，2×2 矩阵） |
 | `pricing` | `title`, `plans:[{name, price, tag?, features:[], highlight?}]`（1–4 个方案，高亮款渐变头部） |
 | `roadmap` | `title`, `phases:[{phase, title, desc?}]`（1–5 阶段，纵向路线图） |
 | `ending` | `title?`, `subtitle?`（默认「谢谢」） |
+| **`chart`** | `title`, `data`, `chartType?`, `insight`, `bullets?`, `legend?`, `dataLabels?`, `colors?`, `displayUnits?`, `source?` — 左 7 栏**原生图表** + 右 5 栏洞察卡 |
+| **`image-split`** | `title`, `image:{src, caption?}`, `side?`, `desc?`, `points?` — 一栏大图（7 栏）+ 一栏文字（5 栏） |
+| **`image-full`** | `title?`, `subtitle?`, `image:{src}`, `align?`, `overlay?` — 全幅底图 + 压暗蒙版 + 骑线文字块 |
+| **`diagram`** | `title`, `mermaid`, `caption?` — mermaid 源码编译成原生可编辑图形 |
 
-`cover` / `section` / `quote` / `ending` 是整幅铺底的深色页，不带页脚；hero 页背景用 **slide 原生渐变**（`set /slide[N] background=C1-C2-角度`），装饰形状按主题 `coverDecor` 生成（circles / grid / band / none）。
+`cover` / `section` / `quote` / `ending` / `image-full` 是整幅铺底的页，不带页脚；hero 页背景用 **slide 原生渐变**（`set /slide[N] background=C1-C2-角度`），装饰形状按主题 `coverDecor` 生成（circles / grid / band / none）。
 
-### 10.4.1 模板库（6 套）
+每页还可额外带：
 
-模板 = 主题基调 + 内容页装饰 + 页码格式 + 默认转场，与版式正交：
+| 字段 | 说明 |
+|---|---|
+| `transition` / `background` / `hidden` | 覆盖整份默认值 |
+| `notes` | 演讲者备注。放映时只有演讲者可见，汇报稿建议每页都写 |
+| `animate` | 入场动画：`true` 用默认 `fade`，也可给效果名（`fade`/`fly`/`zoom`/`wipe`/`bounce`/…）。**只挂在本页视觉锚点上** |
+
+### 10.4.1 元素层（7 类 officecli 原生元素）
+
+`src/pptx/elements.ts` 把 officecli 的**非 shape 元素**接进编译链。在此之前插件只下发 `add --type shape`，而 officecli 的 pptx 元素面有 20 种 —— 缺的那些恰好是「PPT 像不像专业稿」的分水岭。
+
+| 元素 | officecli 类型 | 用途 | 关键能力 |
+|---|---|---|---|
+| 图表 | `chart` | 数据页 | 18 种基类型 + `3d`/`stacked`/`percentStacked` 修饰；图例位置、数据标签、数值轴单位、柱间距、系列配色、圆周起始角、洞径 |
+| 图片 | `picture` | 配图 | 本地路径、圆角、不透明度、描边。**不做裁切**，原图比例需与图槽一致 |
+| 表格 | `table` | 明细/对照 | 主色表头、交替行、列宽、行高 |
+| 图示 | `diagram` | 流程图/时序图 | mermaid 源码 → **原生可编辑图形**（不依赖远程渲染服务） |
+| 连接线 | `connector` | 流程连线 | `straight`/`elbow`/`curve`，按形状名锚定两端 |
+| 动画 | `animation` | 放映效果 | 入场/强调/退出 50+ 效果，三种触发方式 |
+| 备注 | `notes` | 讲稿 | 写入 NotesSlidePart，放映时演讲者可见 |
+
+**实测踩过的三个坑**（都写进了代码注释）：
+
+1. **动画只能挂顶层 shape 或 chart**。挂到 picture 上会被拒绝；diagram 落成一个 group，组内形状也不能单独动画。所以 `pickAnimateTarget()` 只挑图表或页面标题/巨型数字，配图与图示一律不作为动画目标。
+2. **`diagram` 的 native 合成器只支持 `flowchart`/`graph`/`sequenceDiagram`**。其余 mermaid 类型（gantt/pie/classDiagram…）需要无头浏览器，本插件所处环境通常没有，因此 `parseDeckSpec` 直接前置拦截并给出改写建议。
+3. **图示节点在深色主题下「浅底浅字」**。native 合成器给节点固定浅蓝底 `#DAE8FC` 且不写显式文字色 → 文字继承主题 → 深色主题下变成白字压在浅蓝底上，不可读。组内形状的 `@id` 只在运行时才知道，batch 阶段拼不出路径，所以加了**批后修正** `src/pptx/postpass.ts`：生成后扫一遍 `query shape`，把「浅底 + 未显式设色」的组内形状补一个深色墨（幂等）。
+
+**z-order 约定**：officecli 的层序由**插入顺序**决定（先加的在下）。`LayoutResult.elementsBehind` 显式声明元素层序 —— 只有 `image-full` 用 `behind`（底图必须在蒙版与文字之下），其余版式元素在形状之上。
+
+**图槽比例**（officecli 的 picture 不做裁切，比例差太多会拉伸）：
+
+| 版式 | 图槽尺寸 | 建议原图比例 |
+|---|---|---|
+| `image-split`（无图注） | 516 × 372 pt | ≈ 1.39 : 1（接近 7:5） |
+| `image-split`（有图注，图注从图槽让位） | 516 × 350 pt | ≈ 1.47 : 1（接近 3:2） |
+| `image-full` | 960 × 540 pt | ≈ 16 : 9 |
+
+### 10.4.2 模板库（12 套内置 + 用户自定义）
+
+模板 = 主题基调 + 内容页装饰 + 页码格式 + 默认转场 + 可选样式微调，与版式正交：
 
 | id | 名称 | 主题 | 装饰 | 页码 | 转场 |
 |---|---|---|---|---|---|
@@ -390,8 +481,78 @@ curl -s -D - -o /dev/null "http://127.0.0.1:3080/api/officecli/zzz"
 | `minimal` | 极简 | minimal-gray | 无 | 隐藏 | fade |
 | `gov-report` | 政务报告 | gov-red | 顶部细条 | `{n} / {total}` | wipe |
 | `annual-report` | 年度报告 | luxury-black | 左色轨 | `{n} / {total}` | fade |
+| `tech-keynote` | 科技青主题演讲 | tech-cyan | 装饰圆 + 页脚细线 | 纯数字 | push |
+| `data-report` | 数据复盘 | business-blue | 顶部色条 + 页脚细线 | `{n} / {total}` | fade |
+| `warm-consumer` | 暖橙营销 | warm-orange | 顶部色条 + 序号徽章 | `{n} / {total}` | fade |
+| `training-course` | 教学课件 | warm-orange | 序号徽章 + 页脚细线 | `{n} / {total}` | wipe |
+| `esg-green` | 自然绿 ESG | nature-green | 左色轨 + 页脚细线 | `{n} / {total}` | fade |
+| `startup-pitch` | 融资路演 | minimal-gray | 左色轨 | 隐藏（投屏） | push |
 
-在 `office_deck_create` 的 `deck.template` 指定；`deck.theme` 可覆盖模板默认主题；`deck.style`（元数据 / 默认转场 / 默认背景 / 页码格式 / 页脚）与单页 `transition` / `background` / `hidden` 逐级覆盖。
+装饰位可选值：`rail`（左侧 8pt 色轨）/ `topbar`（顶部 5pt 色条）/ `corner`（右上双层装饰圆）/
+`badge`（左上角页码徽章）/ `footerRule`（页脚上方 1pt 细线）。色值一律由主题派生，换主题不违和。
+
+在 `office_deck_create` 的 `deck.template` 指定；`deck.theme` 可覆盖模板默认主题；`deck.style`
+与单页 `transition` / `background` / `hidden` 逐级覆盖。
+
+#### 10.4.2 用户自定义模板（企业 VI）
+
+内置模板写死在代码里。要固化"公司深蓝 + 底部金线 + 微软雅黑"这类规范，用外置 JSON：
+
+| 路径 | 作用域 |
+|---|---|
+| `$DSH_OFFICECLI_TEMPLATES`（多个用 `;` 分隔） | 显式指定，优先级最高 |
+| `~/.dsh/officecli/templates.json` | 全局个人模板 |
+| `<会话目录>/.dsh/officecli/templates.json` | 项目级，随仓库提交 |
+
+```json
+{
+  "templates": [
+    {
+      "id": "corp-vi",
+      "name": "公司标准汇报",
+      "description": "深蓝主色 + 底部金线",
+      "extends": "consulting",
+      "theme": "business-blue",
+      "contentDecor": { "rail": true, "footerRule": true },
+      "layouts": ["cover", "bullets", "kpi", "cards", "ending"],
+      "style": {
+        "colors": { "primary": "#0B4F9E", "accent": "#C8A45C" },
+        "fonts": { "title": "微软雅黑", "body": "等线" },
+        "typography": { "scale": 1.05 }
+      }
+    }
+  ]
+}
+```
+
+要点：
+
+- `extends` 继承内置/已加载模板，只写差异字段（**子模板的 `id` 永远生效**）；
+- `theme` 同样支持中文说法与主色 hex；
+- 无需重启：每次 `office_*` 调用按文件 mtime+size 指纹增量重载；
+- 单个文件写坏了只记一条 warning（`office_design_guide` 的 templates 节可见），不影响其余模板；
+- 仓库里可直接套用 [`examples/templates.json`](examples/templates.json)。
+
+#### 10.4.3 样式注入链
+
+四层配置，后者**部分覆盖**前者，最终全部编译成 officecli 的 `--prop`：
+
+```
+内置主题  →  模板 style（模板作者/企业 VI）  →  deck.style（本次临时修正）  →  slides[i].background/transition
+```
+
+`deck.style` 的可注入面（详见 `office_design_guide` 的 style 节）：
+
+| 字段 | 作用 | 落点 |
+|---|---|---|
+| `vibe` | 自然语言风格（"科技蓝风格"）→ 自动匹配主题 | 整份主题选择 |
+| `colors` | `primary/secondary/accent/bg/text/muted/accent5/accent6/hyperlink` | `theme.color.*` |
+| `fonts` | `title/body`（西文+中文）/ `titleLatin/titleEa/bodyLatin/bodyEa` | `theme.font.*` + shape.font |
+| `typography` | `scale`（0.6–1.6）或 `pageTitle/body/cardTitle/…` 绝对 pt | 每个 shape 的 `size` |
+| `transition` / `background` / `pageNumber` / `footer` / `meta` | 转场、背景、页码、页脚、docProps | slide / presentation |
+
+改动 `bg` 会自动重判明暗模式（前景色跟着反转）；改 `typography` 会连带重算所有文本框高度，
+所以放大字号不会溢出 —— 这也是「字再大一点」这类返工能被一句话解决的原因。
 
 ### 10.5 字数红线
 
@@ -411,20 +572,55 @@ agenda.items[].title   ≤ 14 字    agenda.items[].desc  ≤ 40 字
 swot 每象限            ≤ 4 条     swot 每条            ≤ 18 字
 pricing.plans          ≤ 4 个     pricing.features[]   ≤ 5 条/方案、≤ 12 字/条
 roadmap.phases[].phase ≤ 6 字     roadmap.phases[].title ≤ 12 字、desc ≤ 36 字
+chart.insight          ≤ 60 字（必填）  chart.bullets        ≤ 3 条、≤ 34 字/条
+image-split.desc       ≤ 60 字    image-split.points   ≤ 4 条、title ≤ 12 字
+image-full.title       ≤ 24 字    image-full.subtitle  ≤ 40 字
+diagram.mermaid        节点 ≤ 8 个、每节点 ≤ 10 字
 ```
+
+### 10.5.1 密度门禁（下限）
+
+**只守字数上限会产出「排版正确但内容稀薄」的稿子** —— 模型会学会每页写三个短语就交差，版式没错、字数没超，但整份稿子是信息板不是汇报稿。所以 `src/pptx/checklist.ts` 的 `NARRATIVE_GUIDE` 显式写出下限与节奏约束：
+
+| 门禁 | 规则 |
+|---|---|
+| 页面角色 | hero（封面/章节/关键数据/结束）占 20–30%，两个 hero 之间至少隔 1 页普通内容页 |
+| 版式多样性 | 相邻两页不用同一 layout；`cards` 全篇最多 2 次；`section` 不连续用、不凑页数 |
+| 非对称优先 | 非对称版式（`chart` / `image-split` / `image-full`）占全篇 **≥30%**，避免全篇等宽排布 |
+| 密度下限 | 普通内容页 ≥120 字；卡片组每卡 ≥60 字；数据页至少 1 图 + 1 句判断 |
+| 数据落点 | 写了数字必须给判断（含义解释 / 业务影响 / 管理启示），用 `chart.insight` 承载 |
+| 配图分级 | L1 主视觉 / L2 支撑图 / L3 角标；不用 L3 顶替 L1；全篇图片风格统一 |
+| anti_pattern | 每页定版式时写明「不能怎么排」，如数据页禁等宽卡片横排、章节页禁铺满正文 |
+
+这些不是写在文档里的建议 —— `office_deck_lint` 与 `office_deck_create` 的生成前体检会**实际检查**可判定的部分（10.5.2）。
+
+### 10.5.2 结构体检（office_deck_lint）
+
+`src/pptx/lint.ts` 把门禁里可判定的部分变成可执行检查，分两级：
+
+| 级别 | 检查项 |
+|---|---|
+| **error**（`office_deck_create` 直接拦下，不生成） | `chart` 缺 `insight` 判断 · 图片文件不存在 · 图片用了 `http(s)://` URL |
+| **warning**（照常生成，在回执里提示） | 单页字数低于下限 · 相邻页版式重复 · `cards` 超过 2 次 · 非对称占比 <30% · 连续 3 页同版式 · 全篇无演讲者备注 |
+
+体检还会回报结构概览（页数、非对称占比、有备注/动画的页数、版式分布），并作为 `office_deck_lint` 工具独立暴露，可以在「先想清楚再生成」的流程里单独跑。
 
 ### 10.6 视觉自检清单
 
-`office_screenshot` 返回结果里附带这 8 条，供模型逐条核对（最多改 3 轮）：
+`office_screenshot` 返回结果里附带这 12 条，供模型逐条核对（最多改 3 轮）：
 
 1. 文字溢出：任何文字是否超出其卡片/色块边界
 2. 越界：是否有元素被画布边缘裁掉
 3. 对比度：浅底浅字、深底深字是否难辨认
 4. 对齐：同页多个卡片的标题基线是否一致
 5. 留白：内容是否顶到页边
-6. 密度：单页视觉块是否 >6（该拆分）
+6. 密度：单页视觉块是否 >6（该拆分）；反过来留白是否「均匀稀薄」
 7. 层级：标题字号是否明显大于正文，数字锚点是否够醒目
 8. 一致性：跨页同类元素（圆角、色块、字号）是否统一
+9. 图表：是否被拉伸变形、数据标签是否互相压字、图例是否可读
+10. 配图：是否拉伸变形（原图比例 ≠ 图槽比例）、是否盖住文字
+11. 图示：流程节点文字是否清楚、连线有没有穿过节点
+12. 全篇：相邻页版式是否重复、非对称是否够 30%、是否连续 3 页同一节奏
 
 ### 10.7 文本高度的经验公式
 
@@ -436,6 +632,55 @@ textHeight(text, size, width) = ceil(lines × size × 1.35 × lineSpacing + 6 + 
 
 版式层一律调用这个公式给高度，不拍脑袋。`fitSize()` 则在给定高度内自动降字号（保底 9pt）。
 
+> ⚠️ 形状上设了 `lineSpacing` 时，**必须把这个值一并传给 `textHeight`**。officecli 的溢出判定在设定行距后变成 `size × 1.333 × lineSpacing`，不传就会低估行高。这个坑在元素层新增版式时踩过两次（洞察卡与图文页的说明段），已全部对齐。
+
+### 10.8 与 WorkBuddy PPT 能力的差距分析
+
+对照 WorkBuddy 内置的 `tencent-pptx` 技能（SlideDSL + `slidep` CLI 那一套），两边的能力差距分两层：**元素层**（能产出什么）与**方法层**（怎么组织内容）。
+
+#### 元素层：officecli 有的 vs 插件用到的
+
+`officecli help pptx` 列出的 pptx 元素共 20 种。接入元素层之前，插件只用了 `shape` **一种**：
+
+| 元素 | officecli | 插件（接入前） | 插件（现在） |
+|---|---|---|---|
+| `shape` / `textbox` | ✅ | ✅ | ✅ |
+| `chart` | ✅ 18 种类型 | ❌ | **✅** `chart` 版式 |
+| `picture` | ✅ | ❌ | **✅** `image-split` / `image-full` |
+| `table` | ✅ | ❌（用 shape 手拼） | **✅** `table` 版式走原生表格 |
+| `diagram` | ✅ mermaid → 原生图形 | ❌ | **✅** `diagram` 版式 |
+| `connector` | ✅ | ❌ | ✅ 元素层支持（`steps`/`timeline` 仍用形状连线） |
+| `animation` | ✅ 50+ 效果 | ❌ | **✅** `slides[i].animate` |
+| `notes` | ✅ | ❌ | **✅** `slides[i].notes` |
+| `theme` / `transition` | ✅ | ✅ | ✅ |
+| `slidemaster` / `slidelayout` / `placeholder` | ✅ | ❌ | ❌ 未用 |
+| `group` / `media` / `model3d` / `zoom` / `equation` / `ole` / `comment` | ✅ | ❌ | ❌ 未用（场景窄） |
+
+#### 方法层：WorkBuddy 的方法论 vs 插件的门禁
+
+WorkBuddy 的强项不只在 DSL，还有一整套**内容组织方法**：`STORY.md`（叙事）→ `DESIGN.md`（设计）→ 逐页 `.slide` + `slidep lint` 前置校验。插件原有的约束只有「字数上限」一条，这正是「排版没错但稿子很空」的根因。
+
+| 方法层能力 | WorkBuddy | 插件（接入前） | 插件（现在） |
+|---|---|---|---|
+| 叙事层 STORY（页面角色 / 节奏） | ✅ hero·supporting·transition + rhythm 曲线 | ❌ | **✅** `NARRATIVE_GUIDE` ① ② |
+| 非对称版式占比预算 | ✅ ≥40% | ❌ | **✅** ≥30%（按本插件版式集调低） |
+| 密度门禁（**下限**） | ✅ 字数下限 + 容器填充率 ≥85% | ❌ 只有上限 | **✅** 字数下限 + 留白告警 |
+| 数据必须落点 | ✅ 强制「所以呢」 | ❌ | **✅** `chart.insight` 必填 + lint error |
+| 逐页 anti_pattern | ✅ 每页显式写禁止项 | ❌ | **✅** 写进指南；lint 覆盖版式重复与 cards 超量 |
+| 配图分级 L1/L2/L3 + 生图前置 | ✅ ImageGen 优先 | ❌ | **✅** 分级与图槽比例已固化；❌ 无生图能力（见下） |
+| 前置 lint（写一页校验一页） | ✅ `slidep lint` | ❌ | **✅** `office_deck_lint` + 生成前体检 |
+| 缓存/风格预览卡 + ≤3 问对齐 | ✅ human-alignment | ❌ | ❌ 未做（插件无 UI 对话钩子） |
+
+#### 仍然存在的差距
+
+1. **无配图生成能力**。WorkBuddy 走 `ImageGen` 生图再引用；本插件只能引用**已存在的本地图片文件**。这是最实质的差距 —— 插件现在能排版配图，但产不出图。可行的补法是让插件调用 DSH 的图片生成能力（若宿主暴露），或接受 `office_deck_create` 前由模型自行生图。
+2. **无自由布局**。WorkBuddy 是 flex/absolute 布局引擎，任意组合；插件是 19 个固定版式，模型不能表达非标布局。这是「模板化」与「设计自由」的取舍：插件用版式换来了「模型几乎不会摆歪」的稳定性。
+3. **`diagram` 类型受限**。native 合成器只支持 flowchart / sequenceDiagram；WorkBuddy 的 SVG 内联方案则无此限制。
+4. **未用母版/占位符**。`slidemaster` / `slidelayout` / `placeholder` 未接入，每页都是 blank layout 手绘。
+5. **无逐页增量校验**。`office_deck_create` 是一次性批量生成 + 生成后体检，没有「写一页 → 校验 → 修 → 下一页」的循环。
+
+> 差距 1、2 属于**设计取舍或宿主能力**，不是实现疏漏；3、4、5 是后续可做的事。
+
 ---
 
 ## 11. 架构
@@ -443,12 +688,12 @@ textHeight(text, size, width) = ceil(lines × size × 1.35 × lineSpacing + 6 + 
 ### 11.1 系统全景
 
 ```
-┌─────────────────────────────── DeepSeek-Harness Web UI ───────────────────────────────┐
+┌─────────────────────────────── DeepSeek-Harness Web UI ────────────────────────────────┐
 │                                                                                        │
 │  ┌────────────────┐        ┌────────────────┐        ┌──────────────────────────────┐  │
 │  │   对话窗口      │        │   AI Agent     │        │  侧边栏                       │  │
 │  │                │◄──────►│                │        │  ┌────────────────────────┐  │  │
-│  │  工具调用卡片   │        │  15 个 office_*│        │  │ 📄 Office 预览 按钮     │  │  │
+│  │  工具调用卡片   │        │  16 个 office_*│        │  │ 📄 Office 预览 按钮     │  │  │
 │  │  图片回看       │        │  工具          │        │  └───────────┬────────────┘  │  │
 │  └────────────────┘        └───────┬────────┘        │              ▼               │  │
 │                                    │                 │  ┌────────────────────────┐  │  │
@@ -459,26 +704,30 @@ textHeight(text, size, width) = ceil(lines × size × 1.35 × lineSpacing + 6 + 
 │                                    │                 │  │  │ src=代理 URL     │  │  │  │
 │                                    │                 │  │  └──────────────────┘  │  │  │
 │                                    │                 │  └────────────────────────┘  │  │
-└────────────────────────────────────┼─────────────────┴──────────────┬─────────────────┘
+└────────────────────────────────────┼─────────────────┴──────────────┬──────────────────┘
                                      │ 工具调用                        │ HTTP / SSE
-┌────────────────────────────────────▼────────────────────────────────▼─────────────────┐
+┌────────────────────────────────────▼────────────────────────────────▼──────────────────┐
 │                              dsh-officecli 插件                                        │
 │                                                                                        │
 │  ┌────────────────────────── 宿主半（Node.js）────────────────────────────────────┐    │
-│  │                                                                               │    │
-│  │  tools/                     pptx/（设计层）           基础设施                 │    │
-│  │  ├ create.ts  创建/列表     ├ grid.ts   画布网格      ├ workspace.ts 会话隔离 │    │
-│  │  ├ read.ts    读取/查询     ├ theme.ts  主题令牌      ├ service.ts  安全执行  │    │
-│  │  ├ edit.ts    编辑/批量     ├ layouts.ts 15 种版式    ├ watch.ts    子进程     │    │
-│  │  ├ capture.ts 截图回看      ├ templates.ts 6 套模板   ├ events.ts   SSE 通道   │    │
-│  │  └ deck.ts    高层 PPT      ├ shape.ts  形状 IR       ├ proxy.ts    HTTP 代理  │    │
-│  │                             ├ deck.ts   DeckSpec 编译 ├ routes.ts   路由分发   │    │
-│  │                             └ checklist.ts 设计约束   └ index.ts    DSH 事件挂钩│    │
-│  └───────────────────────────────────────────────────────────────────────────────┘    │
+│  │                                                                                │    │
+│  │ tools/                pptx/（设计层）                  基础设施                │    │
+│  │ ├ create.ts 创建/列表 ├ grid.ts 画布网格               ├ workspace.ts 会话隔离 │    │
+│  │ ├ read.ts 读取/查询   ├ theme.ts 主题令牌              ├ service.ts 安全执行   │    │
+│  │ ├ edit.ts 编辑/批量   ├ shape.ts 形状 IR               ├ watch.ts 子进程       │    │
+│  │ ├ capture.ts 截图回看 ├ layouts.ts 19 种版式           ├ events.ts SSE 通道    │    │
+│  │ ├ deck.ts 高层 PPT    ├ templates.ts 12 套模板         ├ proxy.ts HTTP 代理    │    │
+│  │ ├ common.ts 工具公共  ├ custom-templates.ts 外置模板   ├ routes.ts 路由分发    │    │
+│  │ └ index.ts 工具注册   ├ elements.ts 原生元素           └ index.ts DSH 事件挂钩 │    │
+│  │                       ├ deck.ts DeckSpec 编译                                  │    │
+│  │                       ├ lint.ts 结构体检                                       │    │
+│  │                       ├ checklist.ts 设计约束                                  │    │
+│  │                       └ postpass.ts 批后修正                                   │    │
+│  └────────────────────────────────────────────────────────────────────────────────┘    │
 │                                                                                        │
 │  ┌────────────────────────── 客户端半（React）────────────────────────────────────┐    │
 │  │  index.tsx（注册 sidebar.footer.action） · OfficePreviewAction.tsx · PreviewPanel.tsx │
-│  └───────────────────────────────────────────────────────────────────────────────┘    │
+│  └────────────────────────────────────────────────────────────────────────────────┘    │
 └────────────────────────────────────────┬───────────────────────────────────────────────┘
                                          │ spawn（参数数组，无 shell）
 ┌────────────────────────────────────────▼───────────────────────────────────────────────┐
@@ -538,15 +787,26 @@ GET /api/officecli/events?session=<sid>
   → 客户端更新列表 + 1.2s 高亮动画
 ```
 
-**②b 边改边看（DSH 事件挂钩）**
+**②b 边改边看（DSH 事件挂钩 + 跟随模式）**
 
 ```
-Agent 调用 office_deck_create
+Agent 调用 office_set / office_deck_create / office_slide_add …
   → src/index.ts 的 ctx.on('tools/execute') 先广播 tool-state:running（面板忙碌）
-  → 工具生成并 save 后 warmWatch()：会话无 watch 进程则立即启动（不抢正在预览的文件）
+  → 工具写盘后 notify()：广播 files-changed + file-updated，并调用 WatchManager.applyUpdate()
+      · 预览没开（无 watch 进程）  → 什么都不做，warmWatch() 预热一个
+      · 正在看的就是这个文件       → POST /api/switch 指向同一文件，强制重读（确定的刷新）
+      · 在看别的文件 + 跟随开启    → 切换过去并返回 watch-switched
+      · 在看别的文件 + 已锁定      → 不抢屏，只高亮列表项
+  → 客户端收到 file-updated / watch-switched → bump iframe key 重建 iframe
   → ctx.on('tools/result') 广播 tool-state:done/failed（含失败路径）
-  → 预览面板收到 file-updated（带 pageCount）→ 自动打开该文件的 watch 预览
-  → OfficeCLI watch 自身 SSE 持续推送内容刷新，实现「Agent 改，用户边看」
+```
+
+**②c 跟随开关**
+
+```
+POST /api/officecli/follow?session=<sid>   body: { "enable": true|false, "file": "<name>|null" }
+GET  /api/officecli/watch-status?session=<sid>
+  → { running, following, file, port }   （面板挂载 / 刷新页面后据此续上预览）
 ```
 
 **③ OfficeCLI watch SSE（内容刷新）**
@@ -582,22 +842,26 @@ dsh-officecli/
 │   ├── watch.ts                 # WatchManager：每会话一个 watch 子进程，/api/switch 切换
 │   ├── proxy.ts                 # watch HTTP 代理：Host/Origin 改写、SSE 透传、HTML URL 改写
 │   ├── events.ts                # EventBus：插件自有 SSE 通道
-│   ├── tools/                   # AI 工具（15 个）
+│   ├── tools/                   # AI 工具（16 个）
 │   │   ├── index.ts             # registerTools() 汇总注册
 │   │   ├── common.ts            # sessionId 兜底、filename 校验、textCard / cliError
 │   │   ├── create.ts            # office_create / office_list
 │   │   ├── read.ts              # office_view / office_get / office_query / office_dump
 │   │   ├── edit.ts              # office_set / office_add / office_remove / office_move / office_batch
 │   │   ├── capture.ts           # office_screenshot（含 attachments 回看 + 模型能力探测）
-│   │   └── deck.ts              # office_design_guide / office_deck_create / office_slide_add
+│   │   └── deck.ts              # office_design_guide / office_deck_create / office_deck_lint / office_slide_add
 │   ├── pptx/                    # PPT 设计层（本项目的核心资产）
 │   │   ├── grid.ts              # 画布/网格/母版三区/字号阶梯 + tint、estimateLines
-│   │   ├── theme.ts             # 8 套主题令牌 + inferTheme / themeToProps
-│   │   ├── layouts.ts           # 15 种版式模板 renderSlide()
-│   │   ├── templates.ts         # 6 套专业模板（主题 + 装饰 + 页码 + 转场）
+│   │   ├── theme.ts             # 8 套主题 + 口语/主色解析 + 样式覆盖 + themeToProps
+│   │   ├── layouts.ts           # 19 种版式模板 renderSlide()（15 形状版式 + 4 元素版式）
+│   │   ├── elements.ts          # 7 类 officecli 原生元素编译（chart/table/picture/diagram/connector/animation/notes）
+│   │   ├── templates.ts         # 12 套内置模板（主题 + 装饰 + 页码 + 转场 + 样式）
+│   │   ├── custom-templates.ts  # 用户/企业自定义模板：JSON 外置 + mtime 增量重载
 │   │   ├── shape.ts             # ShapeOp 中间表示 → officecli --prop；textHeight 经验公式
 │   │   ├── deck.ts              # DeckSpec 解析校验 + 编译成 batch 命令序列
-│   │   └── checklist.ts         # 字数红线 / 叙事结构 / 自检清单 / 设计指南
+│   │   ├── postpass.ts          # 批后修正：深色主题下 mermaid 节点墨色回填（幂等）
+│   │   ├── lint.ts              # 结构体检：密度下限 / 版式多样性 / 非对称占比 / 数据落点
+│   │   └── checklist.ts         # 字数红线 / 叙事与密度门禁 / 自检清单 / 设计指南
 │   └── client/                  # 客户端半（React）
 │       ├── index.tsx            # 入口：inject=['slots','sessions']，注册 sidebar.footer.action
 │       ├── OfficePreviewAction.tsx  # 侧栏底部按钮（wide / rail 两形态）
@@ -613,10 +877,14 @@ dsh-officecli/
 │   ├── smoke.ts                 # P1：WorkspaceManager + OfficeCLIService 链路
 │   ├── smoke-watch.ts           # P3：WatchManager + 代理 + SSE + HTML 改写
 │   ├── smoke-deck.mjs           # 设计层：直接用 lib 生成 7 页 PPT
+│   ├── smoke-style.mjs          # 样式注入 / 模板库 / watch 跟随三方向回归（含真机跑 pptx）
+│   ├── smoke-elements.mjs       # 元素层回归：7 类原生元素 + 4 元素版式 + 批后修正 + 结构体检
 │   ├── verify-tools.mjs         # 离线加载 lib/index.js，枚举真实注册的工具
 │   ├── e2e-deck.mjs             # 端到端：设计指南 → 生成 → 截图 → PowerPoint 可打开性
 │   ├── bisect-open.mjs          # 二分定位「哪些版式生成的 pptx 打不开」
 │   └── make-intro-ppt.sh        # 生成示例 PPT
+├── examples/
+│   └── templates.json           # 自定义模板样例（复制到 ~/.dsh/officecli/ 即可用）
 ├── package.json                 # exports / dsh.client / dsh.bundle 声明
 ├── tsconfig.json                # 宿主半 TS 配置（NodeNext → lib/）
 ├── tsconfig.client.json         # 客户端半 TS 配置（仅类型检查，noEmit）
@@ -629,23 +897,28 @@ dsh-officecli/
 
 | 文件 | 行数 | 职责 | 关键导出 |
 |---|---:|---|---|
-| `src/index.ts` | 72 | 插件入口，组装服务、注入路由与工具 | `apply()`, `Config`, `inject = ['tools']` |
-| `src/routes.ts` | 104 | `/api/officecli` 前缀路由与分发 | `registerRoutes()` |
+| `src/index.ts` | 111 | 插件入口，组装服务、注入路由与工具、预载用户模板 | `apply()`, `Config`, `inject = ['tools']` |
+| `src/routes.ts` | 149 | `/api/officecli` 前缀路由与分发（含 `watch-status` / `follow`） | `registerRoutes()` |
 | `src/service.ts` | 163 | 安全执行 officecli、解析 JSON 信封 | `OfficeCLIService.run/probe/propArgs` |
-| `src/workspace.ts` | 86 | 会话隔离目录、文件名校验、防逃逸 | `WorkspaceManager.sessionDir/resolve/listFiles` |
-| `src/watch.ts` | 181 | watch 子进程生命周期、端口发现、切换 | `WatchManager.ensure/status/stop/dispose` |
+| `src/workspace.ts` | 114 | 会话隔离目录、文件名校验、防逃逸 | `WorkspaceManager.sessionDir/resolve/listFiles` |
+| `src/watch.ts` | 253 | watch 子进程生命周期、端口发现、切换、跟随刷新 | `WatchManager.ensure/status/applyUpdate/setFollow` |
 | `src/proxy.ts` | 129 | Host/Origin 改写、SSE 透传、HTML URL 改写 | `proxyToWatch()` |
-| `src/events.ts` | 63 | 插件自有 SSE 通道 | `EventBus.connect/broadcast/dispose` |
-| `src/pptx/grid.ts` | 121 | 画布网格常量与工具函数 | `col/xOf/snap8/pt/tint/estimateLines` |
-| `src/pptx/theme.ts` | 225 | 5 套主题 + 推断 + 编译 | `THEMES/getTheme/inferTheme/themeToProps` |
-| `src/pptx/layouts.ts` | 1004 | 11 种版式模板 | `renderSlide()`, `LAYOUT_IDS` |
-| `src/pptx/shape.ts` | 228 | ShapeOp → `--prop`，文本高度公式 | `toProps/textHeight/fitSize/roundRectAdj` |
-| `src/pptx/deck.ts` | 279 | DeckSpec 校验与编译 | `parseDeckSpec/compileDeck/DECK_SPEC_HELP` |
-| `src/pptx/checklist.ts` | 109 | 设计约束与自检清单 | `designGuide/LENGTH_LIMITS/VISUAL_CHECKLIST` |
-| `src/tools/deck.ts` | 272 | 三个高层 PPT 工具 | `registerDeckTools()` |
-| `src/tools/edit.ts` | 185 | 5 个编辑类工具 | `registerEditTools()` |
-| `src/tools/capture.ts` | 158 | 截图 + 图片回传 + 能力探测 | `registerCaptureTools()` |
-| `src/client/PreviewPanel.tsx` | 160 | 浮层面板 UI | `PreviewPanel` |
+| `src/events.ts` | 73 | 插件自有 SSE 通道（含 `watch-switched`） | `EventBus.connect/broadcast/dispose` |
+| `src/pptx/grid.ts` | 172 | 画布网格常量 + **可替换字号阶梯** | `col/xOf/snap8/pt/tint/typeScale/withTypeScale` |
+| `src/pptx/theme.ts` | 586 | 8 套主题 + 别名/主色派生 + 样式覆盖 + 编译 | `findTheme/resolveTheme/themeFromPrimary/applyThemeOverrides/themeToProps` |
+| `src/pptx/templates.ts` | 366 | 12 套内置模板 + 装饰形状 + 自定义模板合入 | `getTemplate/allTemplates/refreshTemplates/contentDecorShapes` |
+| `src/pptx/custom-templates.ts` | 214 | 外置 JSON 模板加载、`extends` 继承、错误收集 | `TemplateRegistry/refresh/list/styleOf/lastErrors` |
+| `src/pptx/layouts.ts` | 2051 | 19 种版式模板 | `renderSlide()`, `LAYOUT_IDS` |
+| `src/pptx/elements.ts` | 548 | 7 类 officecli 原生元素 → batch 命令 | `elementCommand/chartDataToSeries/slideElementCommands` |
+| `src/pptx/shape.ts` | 304 | ShapeOp → `--prop`，文本高度公式 | `toProps/textHeight/fitSize/roundRectAdj` |
+| `src/pptx/deck.ts` | 834 | DeckSpec 校验与编译（样式注入链、字号作用域、元素/备注/动画） | `parseDeckSpec/compileDeck/pickAnimateTarget/DECK_SPEC_HELP` |
+| `src/pptx/postpass.ts` | 92 | 批后修正：深色主题下 mermaid 节点墨色回填（幂等） | `fixDiagramInk` |
+| `src/pptx/lint.ts` | 268 | 结构体检：密度/多样性/非对称/落点 | `lintDeck/countSlideWords` |
+| `src/pptx/checklist.ts` | 299 | 设计约束、自检清单、元素能力与自定义模板说明 | `designGuide/guideSections/styleCatalog/ELEMENT_GUIDE` |
+| `src/tools/deck.ts` | 461 | 四个高层 PPT 工具 | `registerDeckTools()` |
+| `src/tools/edit.ts` | 195 | 5 个编辑类工具 | `registerEditTools()` |
+| `src/tools/capture.ts` | 159 | 截图 + 图片回传 + 能力探测 | `registerCaptureTools()` |
+| `src/client/PreviewPanel.tsx` | 299 | 浮层面板：文件列表 + iframe + SSE + 跟随开关 | `PreviewPanel` |
 
 ---
 
@@ -720,6 +993,12 @@ node scripts/e2e-deck.mjs
 
 # 设计层冒烟：直接用 lib 生成 7 页 PPT 到指定目录
 node scripts/smoke-deck.mjs <输出目录>
+
+# 样式注入 / 模板库 / watch 跟随 三方向回归（含真机生成 pptx 并用 view issues 校验）
+node scripts/smoke-style.mjs [输出目录]
+
+# 元素层回归：7 类原生元素 + 4 元素版式 + 批后修正 + 结构体检（含真机生成与截图）
+node scripts/smoke-elements.mjs [输出目录]
 
 # 二分定位打不开的版式（历史上用它抓到过 roundRect 的 adj guide 名 bug）
 node scripts/bisect-open.mjs <输出目录>
@@ -828,6 +1107,31 @@ officecli 的 `batch` 走「临时副本 → 全成功才 File.Replace」，所�
 
 注意 resident 模式下 `batch` 只写内存，必须显式 `save` 才落盘。
 
+### 15.11 mermaid 深色主题下节点「浅底浅字」
+
+`add --type diagram` 的 native 合成器给流程节点固定浅蓝底 `#DAE8FC`，但**不写显式文字色**，于是文字继承主题 —— 深色主题下变成白字压在浅蓝底上，`view issues` 的 `low_contrast` 报错。试过两条路都无效：
+
+- `classDef node fill:...,color:...` → 被忽略
+- `%%{init: {"themeVariables": {...}}}%%` → 被忽略
+
+组内形状的 `@id` 只有运行时才知道，batch 阶段拼不出 `"/slide[N]/group[@id=..]/shape[@id=..]"` 路径。所以加了**批后修正** `src/pptx/postpass.ts` 的 `fixDiagramInk()`：生成并 save 之后，`query shape` 扫一遍，把「浅底（亮度 > 阈值）+ 未显式设色」的组内形状补一个深色墨 `1A1A1A`。幂等 —— 已经有显式色的不再改。
+
+### 15.12 动画只能挂 `shape` / `chart`
+
+`add --type animation` 的父路径只能是 `shape[@name=..]` 或 `chart[@name=..]`。挂到 `picture` / `group` 上会报错。所以入场动画的目标选择器 `pickAnimateTarget()` 只从「形状里的大标题 / 巨型数字」和「chart 元素」里挑，**不挑图片与图示**。同理元素层的 `animation` 编译固定走 `shape[@name=..]` 路径。
+
+### 15.13 元素层序由插入顺序决定，只有 `image-full` 用 `behind`
+
+officecli 没有 zorder，层序 = `add` 的先后。`LayoutResult.elementsBehind` 显式声明元素先落盘还是后落盘：只有 `image-full`（全幅底图）需要 `behind` —— 底图必须在蒙版与文字**之下**；其余版式的元素（图表/表格/配图/图示）都在形状**之上**。
+
+### 15.14 `textHeight()` 必须跟着形状的 `lineSpacing`
+
+officecli 的溢出判定在设了行距后从 `size × 1.35` 变成 `size × 1.333 × lineSpacing`。形状上写了 `lineSpacing` 却仍按默认算高度，就会**低估行高 → 文字溢出**。这个坑在元素层新增版式时踩过两次（`chart` 的洞察卡、`image-split` 的说明段），现在这两处都把 `lineSpacing` 一并传给了 `textHeight`。
+
+### 15.15 图表数据要按「系列」转置，而不是按行拼
+
+officecli 的 chart `data` 串是 `系列名:各分类值;系列名:各分类值`（系列内部按分类走）。而人手填的二维表是「行 = 分类、列 = 系列」。`chartDataToSeries()` 负责转置：首行当系列名、首列当分类轴。早期按行直接 `join(';')` 会产出纵轴错位的图。
+
 ---
 
 ## 16. 已知限制
@@ -840,6 +1144,10 @@ officecli 的 `batch` 走「临时副本 → 全成功才 File.Replace」，所�
 | **watch 空闲超时** | OfficeCLI watch 有空闲自动退出机制。插件监听 `child exit` 清句柄，下次 `ensure()` 会重启，但重启期间的预览会断一下 |
 | **进程残留** | 插件卸载时会先 `officecli unwatch` 优雅关停，超时则 `taskkill /T /F` 杀进程树。异常退出仍可能残留，可手动清理 |
 | **HMR 默认关闭** | base bundle 的 `- id: hmr` 是 `disabled: true`。改代码需 `pnpm build` + 重启 DSH（或在插件目录跑 watch 构建） |
+| **插件无配图生成能力** | `image-split` / `image-full` 能排版本地图片，但产不出图 —— 只能引用**已存在的本地文件**，且不接受 `http(s)://` URL（生成前体检直接拦下）。需要配图时由模型先自行生图或改用图示/图表 |
+| **固定版式，无自由布局** | 版式集是 19 个固定模板，模型不能表达非标布局。这是「模板化换稳定性」的取舍（见 [10.8](#108-与-workbuddy-ppt-能力的差距分析)） |
+| **`diagram` 类型受限** | native 合成器只支持 `flowchart` / `sequenceDiagram`（其余 mermaid 类型会在校验阶段被拦下并提示） |
+| **未用母版 / 占位符** | `slidemaster` / `slidelayout` / `placeholder` 未接入，每页都是 blank layout 手绘 |
 
 ---
 
