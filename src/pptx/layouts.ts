@@ -1,7 +1,7 @@
 import { BODY, CANVAS_H, CANVAS_W, CONTENT_W, GUTTER, MARGIN, col, estimateLines, tint, typeScale, xOf } from './grid.js'
 import type { Theme } from './theme.js'
 import { hairlineOf, heroBackground, onPrimary, onPrimaryMuted, surfaceOf } from './theme.js'
-import type { DeckTemplate } from './templates.js'
+import type { ContentDecor, DeckTemplate } from './templates.js'
 import { contentDecorShapes, formatPageNumber } from './templates.js'
 import type { ShapeOp } from './shape.js'
 import { TEXT_MARGIN, bgShape, fitSize, pageFooter, pageTitle, roundRectAdj, textHeight } from './shape.js'
@@ -1977,6 +1977,14 @@ export interface RenderContext {
   pageNumber?: boolean | string
   /** 模板（提供内容页装饰）。 */
   template?: DeckTemplate
+  /**
+   * 内容页装饰的直接指定，优先级高于 `template.contentDecor`。
+   *
+   * 风格预设（`deck.style.preset`）声明了自己的装饰，而预设优先于模板 —— 比如
+   * 「政务报告」的顶部色条遇上「黑底剧场」时，保留前者只会打架。调用方算好
+   * 实际生效的装饰从这条路传进来。
+   */
+  contentDecor?: ContentDecor
 }
 
 /**
@@ -1999,7 +2007,7 @@ export function renderSlide(spec: SlideSpec, theme: Theme, pageNo: number, ctx: 
   }
   // 内容页模板装饰：插在 bg 之后、正文之前（形状按插入顺序叠放）
   if (!footed) {
-    const decor = contentDecorShapes(p, ctx.template?.contentDecor, theme)
+    const decor = contentDecorShapes(p, ctx.contentDecor ?? ctx.template?.contentDecor, theme)
     if (decor.length > 0) res.shapes.splice(1, 0, ...decor)
   }
   return res

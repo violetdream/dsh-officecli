@@ -27,7 +27,8 @@ export function getSessionId(exec: ToolRunContext): string {
  * 缺省（headless / agent-less）回退 undefined，由 WorkspaceManager 落到配置根。
  */
 export function getSessionCwd(exec: ToolRunContext): string | undefined {
-  const cwd = exec.agent?.session.header.cwd
+  // header 在 headless / 测试上下文里可能整体缺失，取不到就当无 cwd（退回配置根）。
+  const cwd = exec.agent?.session.header?.cwd
   return typeof cwd === 'string' && cwd.length > 0 ? cwd : undefined
 }
 

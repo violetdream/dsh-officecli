@@ -13,7 +13,8 @@ import {
   type FontOverrides,
   type Theme,
 } from './theme.js'
-import { allTemplates, getTemplate, templateIds } from './templates.js'
+import { allTemplates, getTemplate, templateIds, type ContentDecor, type DeckTemplate } from './templates.js'
+import { applyStyle, findStyle, type PptStyle } from './styles.js'
 
 /**
  * deck 编排层：把模型填写的 DeckSpec 编译成 officecli `batch` 命令序列。
@@ -60,6 +61,24 @@ export interface DeckStyle {
    * 优先级低于 theme（theme 是精确 id 时直接用），高于模板默认主题。
    */
   vibe?: string
+  /**
+   * 视觉流派预设 id（见 `styles.ts`），如 `neo-swiss` / `bento` / `断言-证据`。
+   *
+   * 与 `template` 正交：template 管**场景**（开什么会用的稿子），preset 管**流派**
+   * （这份稿子的视觉语言）。填了它，插件一次性落地配色 / 字体 / 字号策略 / 封面
+   * 装饰 / 内容页装饰 / 转场 / 页码，优先级高于模板样式与 deck.theme。
+   *
+   * 用户给了品牌主色时（`colors.primary`），流派的有彩色会做**同源色相迁移**，
+   * 中性灰阶不动 —— 而不是整组换掉。
+   */
+  preset?: string
+  /**
+   * 色彩论证：一句话说明「为什么是这组色」。
+   *
+   * 三步推导协议（采样 → 收敛 → 论证）的第三步，也是防 slop 的自检门。不写就
+   * 沿用插件按 OKLCH 推导时自动生成的论证句；写了则覆盖它。
+   */
+  colorRationale?: string
   /** 色槽覆盖，值支持 `#RRGGBB` / `RRGGBB` / `#RGB`。 */
   colors?: ColorOverrides
   /** 字体覆盖。 */
@@ -102,6 +121,10 @@ export interface CompiledDeck {
   layouts: string[]
   /** 使用的模板 id（未指定为 undefined）。 */
   template?: string
+  /** 命中的风格预设 id（未指定或无法识别为 undefined）。 */
+  preset?: string
+  /** `style.preset` 给了但解析不出任何风格 —— 用于回执里提醒模型别以为生效了。 */
+  presetMissed?: string
 }
 
 /** DeckSpec 校验失败时抛出的错误，带面向模型的可修正提示。 */
@@ -168,6 +191,10 @@ function parseStyle(input: unknown, template: string | undefined): DeckStyle | u
   if (typeof s.pageNumber === 'boolean' || typeof s.pageNumber === 'string') out.pageNumber = s.pageNumber
   if (typeof s.footer === 'string') out.footer = s.footer
   if (typeof s.vibe === 'string' && s.vibe.trim()) out.vibe = s.vibe.trim()
+  if (typeof s.preset === 'string' && s.preset.trim()) out.preset = s.preset.trim()
+  if (typeof s.colorRationale === 'string' && s.colorRationale.trim()) {
+    out.colorRationale = s.colorRationale.trim()
+  }
   const colors = parseColors(s.colors)
   if (colors) out.colors = colors
   const fonts = parseFonts(s.fonts)
@@ -619,24 +646,86 @@ function pickTheme(themeInput: string | undefined, vibe: string | undefined, fal
   )
 }
 
-/** 合并模板自带 typography 与本次覆盖（后者优先）。 */
-function mergeTypography(template: ReturnType<typeof getTemplate>, own: TypographyOverride | undefined): TypographyOverride {
-  return { ...(template?.style?.typography ?? {}), ...(own ?? {}) } as TypographyOverride
+/**
+ * 合并字号阶梯，优先级 模板 → 风格预设 → 本次覆盖。
+ *
+ * 一个例外：模型显式给了 `scale` 就意味着「整体缩放」，此时必须丢掉模板与预设里
+ * 烘焙的绝对 pt —— 否则 `withTypeScale` 会让绝对项压过 scale，用户说「字再大点」
+ * 却发现标题纹丝不动。
+ */
+function mergeTypography(
+  template: ReturnType<typeof getTemplate>,
+  preset: PptStyle | undefined,
+  own: TypographyOverride | undefined,
+): TypographyOverride {
+  const base = {
+    ...(template?.style?.typography ?? {}),
+    ...(preset?.typography ?? {}),
+  } as TypographyOverride
+  if (own && typeof own.scale === 'number') {
+    for (const key of ['coverTitle', 'sectionTitle', 'anchor', 'pageTitle', 'cardTitle', 'body', 'quote', 'caption']) {
+      delete base[key as keyof TypographyOverride]
+    }
+  }
+  return { ...base, ...(own ?? {}) }
 }
 
-/** 编译成 batch 命令序列。 */
-export function compileDeck(spec: DeckSpec): CompiledDeck {
+/**
+ * 一份 DeckSpec 最终会落到的视觉系统（不生成任何命令）。
+ *
+ * lint（体检）、评审与 compileDeck 共用这一个解析入口 —— 否则「体检看到的配色/
+ * 字号」和「实际生成出来的」会是两回事，体检结论就没意义了。
+ */
+export interface ResolvedVisuals {
+  template?: DeckTemplate
+  preset?: PptStyle
+  /** `style.preset` 给了但解析不出任何风格（回执里要提醒模型别以为生效了）。 */
+  presetMissed?: string
+  theme: Theme
+  typography: TypographyOverride
+  pageNumber: boolean | string
+  transition?: string
+  footerText?: string
+  contentDecor?: ContentDecor
+}
+
+/** 解析 DeckSpec 的主题 / 字号 / 装饰 / 转场 / 页码（优先级链的唯一实现处）。 */
+export function resolveDeckVisuals(spec: DeckSpec): ResolvedVisuals {
   const template = getTemplate(spec.template)
   const style = spec.style ?? {}
-  // 主题：模板自带的 style.colors/fonts 先落地（企业 VI），再被本次 style 覆盖
+  const preset = findStyle(style.preset)
+  // 主题：模板自带的 style.colors/fonts 先落地（企业 VI），风格预设再整组覆盖，
+  // 最后是本次 style 的显式配色/字体覆盖 —— 越靠后越接近「用户当场说的」。
   let theme = pickTheme(spec.theme, style.vibe, template?.themeId || undefined)
   theme = applyThemeOverrides(
     theme,
     template?.style?.colors as ColorOverrides | undefined,
     template?.style?.fonts as FontOverrides | undefined,
   )
+  if (preset) theme = applyStyle(preset, theme, { primary: style.colors?.primary })
   theme = applyThemeOverrides(theme, style.colors, style.fonts)
-  const typography = mergeTypography(template, style.typography)
+  // 显式论证句优先于插件自动生成的（三步推导的第三步由使用者拍板）
+  if (style.colorRationale) theme.colorRationale = style.colorRationale
+  return {
+    template,
+    preset,
+    presetMissed: style.preset && !preset ? style.preset : undefined,
+    theme,
+    typography: mergeTypography(template, preset, style.typography),
+    // 装饰/转场/页码：风格预设优先于模板 —— 预设是更具体的艺术方向，
+    // 「黑底剧场」与「政务顶部色条」同时指定时，保留前者才不打架。
+    pageNumber: style.pageNumber ?? preset?.pageNumber ?? template?.pageNumber ?? true,
+    transition: style.transition ?? preset?.transition ?? template?.transition,
+    footerText: style.footer ?? spec.footer,
+    contentDecor: preset?.decor ?? template?.contentDecor,
+  }
+}
+
+/** 编译成 batch 命令序列。 */
+export function compileDeck(spec: DeckSpec): CompiledDeck {
+  const visuals = resolveDeckVisuals(spec)
+  const { theme, typography, template, preset } = visuals
+  const style = spec.style ?? {}
   const commands: BatchCommand[] = [
     {
       command: 'set',
@@ -651,15 +740,16 @@ export function compileDeck(spec: DeckSpec): CompiledDeck {
   ]
   const layouts: string[] = []
   const total = spec.slides.length
-  const pageNumber = style.pageNumber ?? template?.pageNumber ?? true
-  const transition = style.transition ?? template?.transition
-  const footerText = style.footer ?? spec.footer
+  const pageNumber = visuals.pageNumber
+  const transition = visuals.transition
+  const footerText = visuals.footerText
+  const decor = visuals.contentDecor
 
   // 用闭包而不是内联 IIFE：可读性之外也让 withTypeScale 的作用域一眼可见。
   const renderAll = (): void => {
     spec.slides.forEach((slide, i) => {
       const pageNo = i + 1
-      const res = renderSlide(slide, theme, pageNo, { total, footerText, pageNumber, template })
+      const res = renderSlide(slide, theme, pageNo, { total, footerText, pageNumber, template, contentDecor: decor })
       layouts.push(slide.layout)
       commands.push({ command: 'add', path: '/', type: 'slide', props: { layout: 'blank' } })
 
@@ -736,7 +826,15 @@ export function compileDeck(spec: DeckSpec): CompiledDeck {
   // textHeight / fitSize 会按缩放后的字号重新算高度，所以放大字号不会就地溢出。
   withTypeScale(typography, renderAll)
 
-  return { commands, pageCount: total, theme, layouts, template: template?.id }
+  return {
+    commands,
+    pageCount: total,
+    theme,
+    layouts,
+    template: template?.id,
+    preset: preset?.id,
+    presetMissed: visuals.presetMissed,
+  }
 }
 
 /**
@@ -771,20 +869,26 @@ const TEMPLATE_HINT = 'consulting/product-launch/academic-defense/minimal/gov-re
 /** 给模型看的 DeckSpec 速查（塞进工具 description）。 */
 export const DECK_SPEC_HELP = `DeckSpec 结构：
 {
-  "template": "模板id，可选（${TEMPLATE_HINT}）",
+  "template": "模板id，可选（${TEMPLATE_HINT}）—— 决定场景外衣",
   "theme": "主题id/中文说法/主色，可选：business-blue / 科技蓝 / #0F5EA6 都能识别，默认随模板",
+           // 只决定颜色；要连字体/字号/装饰一起定，用 style.preset
   "footer": "页脚左文字，可选",
   "style": {                    // 整份样式协议，可选
+    "preset": "视觉流派 id 或中文说法（见 styles 节），可选",
+                                // 如 neo-swiss / 大字报风格 / bento / 断言-证据 / 黑底发布会
+                                // 一次性落地配色+字体+字号策略+装饰+转场+页码；与 template 正交
     "meta": { "title": "...", "author": "...", "keywords": "...", "description": "...", "category": "..." },
     "transition": "fade",       // 默认转场：fade/push/wipe/morph 等
     "background": "#F5F5F5",    // 默认页背景（色值或渐变 C1-C2-角度）
     "pageNumber": "{n} / {total}",  // true 纯数字 / 字符串模板 / false 隐藏
     "footer": "页脚文字（优先级高于顶层 footer）",
 
-    "vibe": "科技蓝风格",        // 自然语言风格：自动映射到最接近的主题
+    "vibe": "科技蓝风格",        // 自然语言风格：只映射主题（颜色），不影响流派
+    "colorRationale": "为什么是这组色（一句话）",  // 色彩推导第三步，防 slop 的自检门
     "colors": {                 // 色槽覆盖，优先级最高（值支持 #RGB / #RRGGBB）
       "primary": "#0F5EA6", "secondary": "...", "accent": "...",
       "bg": "#FFFFFF", "text": "#1A1A1A", "muted": "#6B7280"
+                                // 只填 primary 就够：其余按 OKLCH 同源派生；配 preset 时会做色相迁移
     },
     "fonts": {                  // 字体覆盖（Windows 必须装过该字体，否则 PPT 会回退）
       "title": "微软雅黑", "body": "等线",
@@ -831,4 +935,8 @@ slides[i].layout 取值与必填字段：
               只挂在视觉锚点上（图表/标题/巨型数字），全篇统一一种效果
 
 推荐节奏：非对称版式（chart / image-split / image-full）应占全篇 ≥30%，cards 全篇最多 2 次，
-相邻页不重复版式；数据页必须配 insight 判断；详见 design guide 的 story 节（叙事与密度）。`
+相邻页不重复版式；数据页必须配 insight 判断；详见 design guide 的 story 节（叙事与密度）。
+
+生成前先过 form 推导五问（design guide 的 form 节），再决定用哪套视觉流派（styles 节）。
+拿不准选哪套 → 先调 office_deck_directions 出三个差异化方向的真实初稿让用户挑。
+生成后想质检 → office_deck_review。`

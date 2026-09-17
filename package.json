@@ -39,7 +39,9 @@
   "scripts": {
     "build": "tsc && node client.build.mjs",
     "build:host": "tsc",
-    "build:client": "node client.build.mjs"
+    "build:client": "node client.build.mjs",
+    "regress": "node scripts/regress.mjs",
+    "demo:styles": "node scripts/demo-styles.mjs"
   },
   "dsh": {
     "client": {

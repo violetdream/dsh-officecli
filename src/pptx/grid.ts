@@ -83,19 +83,32 @@ export function typeScale(): TypeScale {
  */
 export function withTypeScale<T>(scale: Partial<TypeScale> & { scale?: number }, fn: () => T): T {
   const prev = currentScale
-  const factor = typeof scale.scale === 'number' ? clampFactor(scale.scale) : 1
-  const next: TypeScale = { ...prev }
-  for (const key of Object.keys(FONT) as (keyof TypeScale)[]) {
-    const override = scale[key]
-    if (typeof override === 'number' && Number.isFinite(override)) next[key] = quantize(override)
-    else next[key] = quantize(prev[key] * factor)
-  }
-  currentScale = next
+  currentScale = resolveTypeScale(scale)
   try {
     return fn()
   } finally {
     currentScale = prev
   }
+}
+
+/**
+ * 只算不换：给定覆盖项，算出届时会生效的字号阶梯。
+ *
+ * `withTypeScale` 的纯函数版。体检（lint）与评审需要知道「实际会用到多大字号」
+ * 才能判断层级是否足够，但它们不能改全局状态 —— 所以这段逻辑必须独立出来，
+ * 不能靠「先替换再读」。
+ */
+export function resolveTypeScale(scale: Partial<TypeScale> & { scale?: number }): TypeScale {
+  const base = currentScale
+  const factor = clampFactor(typeof scale.scale === 'number' ? scale.scale : 1)
+  const next: TypeScale = { ...base }
+  for (const key of Object.keys(FONT) as (keyof TypeScale)[]) {
+    const override = scale[key]
+    next[key] = typeof override === 'number' && Number.isFinite(override)
+      ? quantize(override)
+      : quantize(base[key] * factor)
+  }
+  return next
 }
 
 function clampFactor(f: number): number {

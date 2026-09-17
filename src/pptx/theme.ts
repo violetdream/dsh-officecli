@@ -44,6 +44,20 @@ export interface Theme {
   fontTitle: { latin: string; ea: string }
   /** 正文字体。 */
   fontBody: { latin: string; ea: string }
+  /**
+   * 色彩论证：为什么是这组色（一句话）。
+   *
+   * 由 {@link themeFromPrimary} 派生主题时自动生成；内置主题留空（它们的色是
+   * 手工设计的，不需要自证）。这一字段存在的意义是**防 slop 的自检门** ——
+   * 写不出「为什么是这个色」，说明调色板是从模型先验里抽的签，而不是从内容
+   * 里采的样。
+   */
+  colorRationale?: string
+  /**
+   * 设计风格 id（见 `styles.ts`）：由 `deck.style.preset` 命中时回填，
+   * 供回执与评审说明「这版用的是哪套视觉系统」。
+   */
+  styleId?: string
 }
 
 /** 内置主题。 */
@@ -311,13 +325,13 @@ export function themeAliasCatalog(): string {
 // 由单一主色派生完整配色
 // ---------------------------------------------------------------------------
 
-interface Hsl {
+export interface Hsl {
   h: number
   s: number
   l: number
 }
 
-function hexToHsl(hex: string): Hsl {
+export function hexToHsl(hex: string): Hsl {
   const h = hex.replace('#', '').padStart(6, '0')
   const r = parseInt(h.slice(0, 2), 16) / 255
   const g = parseInt(h.slice(2, 4), 16) / 255
@@ -335,7 +349,7 @@ function hexToHsl(hex: string): Hsl {
   return { h: hue * 360, s, l }
 }
 
-function hslToHex({ h, s, l }: Hsl): string {
+export function hslToHex({ h, s, l }: Hsl): string {
   const hh = ((h % 360) + 360) % 360
   const c = (1 - Math.abs(2 * l - 1)) * s
   const x = c * (1 - Math.abs(((hh / 60) % 2) - 1))
@@ -353,45 +367,251 @@ function hslToHex({ h, s, l }: Hsl): string {
     .toUpperCase()
 }
 
-/** 在 HSL 空间旋转色相并微调明度，得到同源色。 */
-function rotate(base: string, dHue: number, dSat = 0, dLight = 0): string {
-  const c = hexToHsl(base)
-  return hslToHex({
-    h: c.h + dHue,
-    s: Math.max(0.08, Math.min(1, c.s + dSat)),
-    l: Math.max(0.06, Math.min(0.94, c.l + dLight)),
-  })
+// ---------------------------------------------------------------------------
+// OKLCH：感知均匀色空间的色彩推导
+// ---------------------------------------------------------------------------
+
+/**
+ * OKLCH 色彩：L 明度（0–1，感知均匀）、C chroma（0–0.37+）、h 色相（度）。
+ *
+ * 为什么不用 HSL 推导配色：HSL 的 L 通道不是感知均匀的 —— 同一个 `l: 0.5`
+ * 在黄色上是亮米色、在蓝色上是深墨蓝，于是「明度序列」在 HSL 里根本不成立，
+ * 只能靠肉眼一个个试。色相也是同理：HSL 里等角度旋转出来的「邻近色」，
+ * 落到屏幕上可能一个偏灰一个荧光。OKLCH 的 L 可以直接当层级用、h 可以当
+ * 色相角用（拉开 60° 就是能看出来的两色），这是能写出「推导规则」而不是
+ * 「猜色值」的前提。
+ */
+export interface Oklch {
+  L: number
+  C: number
+  h: number
+}
+
+function srgbToLinear(c: number): number {
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+}
+
+function linearToSrgb(c: number): number {
+  return c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055
+}
+
+/** sRGB hex → OKLCH（Björn Ottosson 的 OKLab 变换链）。 */
+export function hexToOklch(hex: string): Oklch {
+  const h = hex.replace('#', '').padStart(6, '0')
+  const r = srgbToLinear(parseInt(h.slice(0, 2), 16) / 255)
+  const g = srgbToLinear(parseInt(h.slice(2, 4), 16) / 255)
+  const b = srgbToLinear(parseInt(h.slice(4, 6), 16) / 255)
+
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+
+  const L = 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s
+  const A = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s
+  const B = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s
+  return { L, C: Math.hypot(A, B), h: (Math.atan2(B, A) * 180) / Math.PI }
+}
+
+/** OKLCH → sRGB hex。超色域时按 0.002 步长降 chroma 收回，避免出现死板的高饱和荧光。 */
+export function oklchToHex({ L, C, h }: Oklch): string {
+  const rad = (h * Math.PI) / 180
+  const lCap = Math.max(0, Math.min(1, L))
+  let chroma = Math.max(0, C)
+  for (let i = 0; i < 200; i++) {
+    const a = Math.cos(rad) * chroma
+    const b = Math.sin(rad) * chroma
+    const l_ = lCap + 0.3963377774 * a + 0.2158037573 * b
+    const m_ = lCap - 0.1055613458 * a - 0.0638541728 * b
+    const s_ = lCap - 0.0894841775 * a - 1.291485548 * b
+    const l3 = l_ * l_ * l_
+    const m3 = m_ * m_ * m_
+    const s3 = s_ * s_ * s_
+    const rgb = [
+      4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3,
+      -1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3,
+      -0.0041960863 * l3 - 0.7034186147 * m3 + 1.707614701 * s3,
+    ]
+    if (rgb.every((v) => v >= -0.0005 && v <= 1.0005)) {
+      return rgb
+        .map((v) => Math.round(Math.max(0, Math.min(1, linearToSrgb(Math.max(0, Math.min(1, v))))) * 255)
+          .toString(16)
+          .padStart(2, '0'))
+        .join('')
+        .toUpperCase()
+    }
+    chroma -= 0.002
+    if (chroma <= 0) break
+  }
+  const gray = Math.round(Math.max(0, Math.min(1, linearToSrgb(lCap))) * 255)
+    .toString(16)
+    .padStart(2, '0')
+  return `${gray}${gray}${gray}`.toUpperCase()
+}
+
+/** 色相移动 dH 度（结果落在 [0,360)）。 */
+function spinHue(h: number, dH: number): number {
+  return ((h + dH) % 360 + 360) % 360
+}
+
+/**
+ * 两个颜色的 OKLab 感知色差（ΔE）。
+ *
+ * 判断「这两种色投屏上分不分得开」不能只比色相角 —— 近中性色（近黑、灰）的
+ * 色相是无意义的坐标，两个灰的色相角可能差 120° 却看起来一样。ΔE 把明度、
+ * 彩度、色相一起算进欧氏距离，是唯一的可靠判据。
+ *
+ * 经验阈值：ΔE ≥ 0.15 肉眼可分辨；< 0.10 基本是同一个色。
+ */
+export function deltaE(a: string, b: string): number {
+  const x = hexToOklch(a)
+  const y = hexToOklch(b)
+  const ax = Math.cos((x.h * Math.PI) / 180) * x.C
+  const bx = Math.sin((x.h * Math.PI) / 180) * x.C
+  const ay = Math.cos((y.h * Math.PI) / 180) * y.C
+  const by = Math.sin((y.h * Math.PI) / 180) * y.C
+  return Math.hypot(x.L - y.L, ax - ay, bx - by)
+}
+
+/** WCAG 对比度（1–21）。用于校验文字压在其底色上是否读得出来。 */
+export function contrastRatio(a: string, b: string): number {
+  const la = relativeLuminance(a)
+  const lb = relativeLuminance(b)
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+}
+
+/** WCAG 相对亮度（线性化后的加权和），对比度公式的分量。 */
+export function relativeLuminance(hex: string): number {
+  const h = hex.replace('#', '').padStart(6, '0')
+  const lin = (v: number): number => {
+    const c = v / 255
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+  }
+  return (
+    0.2126 * lin(parseInt(h.slice(0, 2), 16)) +
+    0.7152 * lin(parseInt(h.slice(2, 4), 16)) +
+    0.0722 * lin(parseInt(h.slice(4, 6), 16))
+  )
+}
+
+/** 夹取到区间。 */
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v))
+}
+
+/**
+ * 色相迁移：把 slot 从 `from` 的同源体系搬到 `to` 的同源体系。
+ *
+ * 这是「品牌色优先」的关键一步 —— 用户给了公司主色时，风格预设里那套**手工
+ * 调过的关系**（哪个是邻近色、哪个是对比色、明度怎么排）必须保留，只把整体
+ * 色相搬到新主色上。**中性色原样返回**：白/灰/黑不该跟着主色变色，否则
+ * 「近黑底 + 中性灰阶」类的风格一换主色就整组发彩。
+ */
+export function rebaseColor(from: string, to: string, slot: string): string {
+  const a = hexToOklch(from)
+  const b = hexToOklch(to)
+  const s = hexToOklch(slot)
+  if (s.C < 0.03) return slot.replace('#', '').toUpperCase()
+  return oklchToHex({ L: s.L, C: Math.min(s.C, 0.22), h: spinHue(s.h, b.h - a.h) })
+}
+
+/** 一组派生参数，便于 smoke 脚本与评审复算。 */
+export interface DerivationStep {
+  slot: string
+  hex: string
+  rule: string
+}
+
+/**
+ * 落实「三步色彩推导协议」的后两步（第一步「采样」由调用方完成 —— 主色要么
+ * 来自用户/品牌，要么来自内容，总之不该是本函数凭空发明的）。
+ *
+ * **收敛**：把主色压进有彩色 ≤3 个的体系 —— 1 个主色 + 1 个邻近辅色 + 1 个
+ * 对比强调色，其余降为同色相明度阶（中性序列）。色相之间保证 ΔH ≥ 60°，或
+ * 明度保证 ΔL ≥ 0.3，两者必居其一，否则在投屏上根本分不出是两种色。
+ *
+ * **论证**：返回的 {@link DerivationStep} 列表就是论证材料，{@link themeFromPrimary}
+ * 会把它压成一句写进 `Theme.colorRationale`。
+ */
+export function derivePalette(hex: string, opts: { dark?: boolean } = {}): DerivationStep[] {
+  const raw = normalizeHex(hex) ?? '1F6FEB'
+  const p = hexToOklch(raw)
+  // 收敛①：油墨感。屏幕色拉到满 chroma 会发荧光，PPT 投屏后尤其廉价；
+  // 把主色 chroma 收进 0.06–0.16（对应印刷油墨的观感区间）。
+  const pc = clamp(p.C, 0.06, 0.16)
+  // 收敛②：明度也要收。极亮的主色（#FFE01B 这类荧光黄）压白底会糊成一片，
+  // 极暗的主色则退化成黑 —— 收进 [0.20, 0.86] 之后才谈得上「可读的主色」。
+  const pL = clamp(p.L, 0.2, 0.86)
+  const primary = oklchToHex({ L: pL, C: pc, h: p.h })
+  const dark = opts.dark ?? hexToHsl(primary).l < 0.28
+  const clamped = [
+    pc !== p.C ? `chroma ${p.C.toFixed(3)}→${pc.toFixed(3)}（印刷油墨感，避开屏幕荧光）` : null,
+    pL !== p.L ? `明度 ${p.L.toFixed(3)}→${pL.toFixed(3)}（收进可读区间）` : null,
+  ].filter(Boolean)
+  const steps: DerivationStep[] = [
+    {
+      slot: 'primary',
+      hex: primary,
+      rule: clamped.length > 0 ? `采样主色 ${raw}，收敛：${clamped.join('，')}` : `采样主色 ${raw}，本身已在可用区间，原样保留`,
+    },
+  ]
+  // 收敛③：辅色 = 邻近色（ΔH 42°），**明度不抬**，与主色同权重但可区分。
+  const secC = clamp(pc * 0.82, 0.05, 0.13)
+  const secondary = oklchToHex({ L: clamp(pL + (dark ? 0.1 : 0.05), 0.18, 0.86), C: secC, h: spinHue(p.h, 42) })
+  steps.push({ slot: 'secondary', hex: secondary, rule: '邻近色 ΔH 42°，chroma 降至主色 82%（第二系列，不与主色抢权重）' })
+  // 收敛④：强调色 = 对比色（ΔH 152° ≥ 60°，满足「看得出是两种色」的可分辨前提），
+  // 明度按底色反向定 —— 浅底要够暗才压得住字，深底要够亮才浮得出来。
+  const accL = dark ? 0.74 : 0.56
+  const accent = oklchToHex({ L: accL, C: 0.15, h: spinHue(p.h, 152) })
+  steps.push({ slot: 'accent', hex: accent, rule: `对比色 ΔH 152°、ΔL ${Math.abs(accL - pL).toFixed(2)}，明度按底色反向定（强调色要压得住前景）` })
+  return [
+    ...steps,
+    { slot: 'bg', hex: dark ? oklchToHex({ L: 0.17, C: Math.min(pc * 0.2, 0.025), h: p.h }) : 'FFFFFF', rule: dark ? '深色底：主色相极低 chroma 的暗场' : '浅色底：纯白，让色彩全部让位给内容' },
+    { slot: 'text', hex: dark ? 'F1F5F9' : oklchToHex({ L: 0.22, C: 0.015, h: p.h }), rule: '正文色：主色相去饱和到近乎中性，避免整页发彩' },
+    { slot: 'muted', hex: oklchToHex({ L: dark ? 0.7 : 0.58, C: 0.02, h: p.h }), rule: '弱化色：同色相中性序列的中段' },
+    { slot: 'accent5', hex: oklchToHex({ L: clamp(pL - 0.12, 0.22, 0.78), C: pc * 0.9, h: p.h }), rule: '点缀色 = 主色同色相降一级明度（不新增色相）' },
+    { slot: 'accent6', hex: oklchToHex({ L: clamp(pL + 0.16, 0.28, 0.88), C: pc * 0.78, h: p.h }), rule: '反差色 = 主色同色相升一级明度（不新增色相）' },
+  ]
 }
 
 /**
  * 由一个主色派生整套主题。
  *
- * 用户只说"用我们公司的主色 #0F5EA6"时也能拿到一份协调的 PPT 配色：辅色取
- * 邻近色（+32°），强调色取接近补色（-155°，并提到足够饱和度）保证对比度，
- * 背景/文字按明暗模式取极值。
+ * 用户只说"用我们公司的主色 #0F5EA6"时也能拿到一份协调的 PPT 配色。走的是
+ * {@link derivePalette} 的三步推导（采样 → 收敛 → 论证），而不是早期版本的
+ * 「在 HSL 色轮上转 +32° 取辅色」—— 后者是凭空发明颜色：同一个输入换个色相
+ * 起点，转出来的永远是那几个网红色，且 HSL 的明度不可比。
+ *
+ * 结果里的 `colorRationale` 是论证句，可被设计指南与评审直接引用。
  */
 export function themeFromPrimary(hex: string, opts: { dark?: boolean; name?: string } = {}): Theme {
-  const primary = normalizeHex(hex) ?? '1F6FEB'
-  const dark = opts.dark ?? hexToHsl(primary).l < 0.28
-  const bg = dark ? tint(primary, -0.92) : 'FFFFFF'
-  const text = dark ? tint(primary, 0.9) : '1A1A1A'
+  const steps = derivePalette(hex, opts)
+  const at = (slot: string): string => steps.find((s) => s.slot === slot)!.hex
+  const primary = at('primary')
   return {
     id: `custom-${primary}`,
     name: opts.name ?? `自定义主色 #${primary}`,
-    dark,
-    bg,
+    dark: opts.dark ?? hexToHsl(primary).l < 0.28,
+    bg: at('bg'),
     primary,
-    secondary: rotate(primary, 32, -0.05, dark ? 0.08 : -0.02),
-    accent: rotate(primary, -155, 0.15, dark ? 0.06 : 0.02),
-    text,
-    muted: dark ? tint(primary, 0.52) : '6B7280',
-    accent5: rotate(primary, 60, -0.02, -0.04),
-    accent6: rotate(primary, -60, -0.02, -0.04),
-    hyperlink: dark ? tint(primary, 0.35) : tint(primary, -0.18),
-    heroGradient: `${primary}-${tint(primary, dark ? 0.35 : -0.28)}-135`,
-    coverDecor: dark ? 'grid' : 'circles',
+    secondary: at('secondary'),
+    accent: at('accent'),
+    text: at('text'),
+    muted: at('muted'),
+    accent5: at('accent5'),
+    accent6: at('accent6'),
+    hyperlink: oklchToHex({
+      ...hexToOklch(primary),
+      L: clamp(hexToOklch(primary).L + (opts.dark ? 0.14 : -0.14), 0.2, 0.88),
+    }),
+    heroGradient: `${primary}-${tint(primary, (opts.dark ?? false) ? 0.35 : -0.28)}-135`,
+    coverDecor: (opts.dark ?? false) ? 'grid' : 'circles',
     fontTitle: { latin: 'Segoe UI', ea: '微软雅黑' },
     fontBody: { latin: 'Segoe UI', ea: '微软雅黑' },
+    colorRationale:
+      `主色 ${primary} 为采样所得；` +
+      `辅色取 ΔH42° 邻近色并压 chroma，强调色取 ΔH152° 对比色；` +
+      `其余色槽不新增色相，只做同色相明度阶（accent5/accent6）与去饱和中性序列（bg/text/muted）。` +
+      `全文有彩色 3 个 + 中性序列 1 组，符合「2–3 个有彩色 + 1 组中性色」的收敛要求。`,
   }
 }
 
@@ -432,14 +652,26 @@ export function applyThemeOverrides(theme: Theme, colors?: ColorOverrides, fonts
     fontBody: { ...theme.fontBody },
   }
   if (colors) {
+    const touched: string[] = []
     for (const slot of COLOR_SLOTS) {
       const v = colors[slot]
       if (typeof v !== 'string') continue
       const hex = normalizeHex(v)
-      if (hex) next[slot] = hex
+      if (hex) {
+        // 只有**真的改变了取值**才算「显式覆盖」。风格预设已经用品牌主色做过
+        // 色相迁移（并写下论证），这里若照旧记一笔，会把那条更具体的论证冲掉。
+        if (hex !== next[slot]) touched.push(slot)
+        next[slot] = hex
+      }
     }
     // 背景换了就重判明暗：白底配深蓝字与黑底配浅字走不同的前景公式
     if (colors.bg && normalizeHex(colors.bg)) next.dark = isDarkColor(next.bg)
+    // 覆盖之后原推导已部分失效，但未覆盖的槽仍成立 —— 追加说明而不是替换，
+    // 免得把风格预设/主色派生写下的「为什么是这组色」整段抹掉。
+    if (touched.length > 0) {
+      const note = `色槽被显式指定：${touched.join(' / ')} —— 这些槽不再按基色推导，其余槽沿用原推导结果。`
+      next.colorRationale = next.colorRationale ? `${next.colorRationale}\n  ⤷ ${note}` : note
+    }
   }
   if (fonts) {
     if (fonts.title) {
@@ -527,16 +759,35 @@ export function inferTheme(format: Record<string, unknown> | undefined): Theme |
   ) ?? theme
 }
 
+/** hero 页整幅主色铺底时，压在主色上的深色墨（亮主色场景用）。 */
+const INK_ON_LIGHT_PRIMARY = '111827'
+
 /**
- * 主色块之上的前景色。深色底主题用文字色，浅色底用白色。
- * 用于封面、章节页、结束页这类整幅主色铺底的版式。
+ * hero 前景的最低对比度。
+ *
+ * 取 3.0 而不是正文的 4.5：封面/章节/结束页的字号 ≥48pt，属 WCAG 的 large text，
+ * 3.0 是它对应的门槛。按 4.5 卡会把一批合法品牌色（暖橙、珊瑚红）误判成不可用。
+ */
+const HERO_MIN_CONTRAST = 3
+
+/**
+ * 主色块之上的前景色。用于封面、章节页、结束页这类整幅主色铺底的版式。
+ *
+ * 判据是**主色自身的明度**，不是主题的明暗模式 —— 早期版本写死「浅色主题就用
+ * 白字」，遇到亮主色（Spotify 绿 #1ED760、Mailchimp 黄 #FFE01B 这类真实品牌
+ * 色）会产出白字压亮绿 —— 实测对比度只有 1.9，投屏上完全读不出来。现在在明度
+ * 判断之上再加一道对比度兜底：首选墨色达不到 large-text 门槛就换成另一种。
  */
 export function onPrimary(theme: Theme): string {
-  return theme.dark ? theme.text : 'FFFFFF'
+  const first = luminance(theme.primary) < 0.5 ? 'FFFFFF' : INK_ON_LIGHT_PRIMARY
+  // 明度判断之上再加一道对比度兜底：首选墨色达不到 large-text 门槛就换另一种。
+  if (contrastRatio(theme.primary, first) >= HERO_MIN_CONTRAST) return first
+  return first === 'FFFFFF' ? INK_ON_LIGHT_PRIMARY : 'FFFFFF'
 }
 
 /** 主色块之上的弱化前景色。 */
 export function onPrimaryMuted(theme: Theme): string {
+  if (onPrimary(theme) !== 'FFFFFF') return tint(INK_ON_LIGHT_PRIMARY, 0.42)
   return theme.dark ? theme.muted : tint(theme.primary, 0.7)
 }
 

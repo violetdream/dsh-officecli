@@ -7,6 +7,7 @@ import { formatLint, lintDeck } from '../pptx/lint.js'
 import { fixDiagramInk } from '../pptx/postpass.js'
 import { findTheme, getTheme, inferTheme, themeToProps } from '../pptx/theme.js'
 import { getTemplate, refreshTemplates } from '../pptx/templates.js'
+import { findStyle, styleDetail, styleIds } from '../pptx/styles.js'
 import { VISUAL_CHECKLIST, designGuide } from '../pptx/checklist.js'
 import { cliError, getSessionCwd, getSessionId, notify, textCard, warmWatch } from './common.js'
 import type { PluginDeps } from '../routes.js'
@@ -37,7 +38,7 @@ function toDeck(input: unknown, cwd?: string): DeckSpec {
 }
 
 /** 提交 batch 并把 officecli 的失败定位到具体命令。 */
-async function submitBatch(
+export async function submitBatch(
   deps: PluginDeps,
   sessionId: string,
   abs: string,
@@ -68,17 +69,43 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
     defineTool({
       name: 'office_design_guide',
       description:
-        '生成 PPT 前必读：返回模板清单（含用户自定义模板）、主题与自然语言的映射表、样式注入协议、' +
-        '可用元素能力（原生图表/表格/配图/图示/演讲者备注/动画）、叙事与密度门禁、每类字段的字数红线、' +
+        '生成 PPT 前必读：返回模板清单（含用户自定义模板）、主题与自然语言的映射表、PPT 风格库（17 套，含各自 anti-pattern）、' +
+        '样式注入协议、何时用哪套风格的取舍说明、可用元素能力（原生图表/表格/配图/图示/演讲者备注/动画）、' +
+        'form 推导五问、反 AI slop 与色彩推导协议、叙事与密度门禁、每类字段的字数红线、' +
         '版式契约（DeckSpec 结构）和生成后的视觉自检清单。' +
         '在调用 office_deck_create 之前先调用本工具，能显著降低返工率。',
       parameters: {
         section: {
           type: 'string',
-          enum: ['all', 'templates', 'themes', 'style', 'custom', 'elements', 'story', 'limits', 'scale', 'spec', 'checklist'] as const,
+          enum: [
+            'all',
+            'templates',
+            'themes',
+            'styles',
+            'style',
+            'custom',
+            'elements',
+            'form',
+            'story',
+            'slop',
+            'review',
+            'limits',
+            'scale',
+            'spec',
+            'checklist',
+          ] as const,
           description:
-            '只看某一节；缺省返回完整指南。custom = 如何写自定义模板文件；elements = 图表/配图/图示/备注/动画能力；' +
-            'story = 叙事与密度门禁（必读）',
+            '只看某一节；缺省返回完整指南。' +
+            'styles = 17 套 PPT 风格库（id / 温度档 / 配色 / anti-pattern）；style = 风格注入协议与优先级；' +
+            'form = form 推导五问（决定每页版式前先答）；story = 叙事与密度门禁（必读）；' +
+            'slop = 反 AI slop 禁区 + 色彩推导三步；review = 6 维度设计评审标准（评审时才需要，不在全量指南里）；' +
+            'custom = 如何写自定义模板文件；elements = 图表/配图/图示/备注/动画能力。',
+        },
+        style: {
+          type: 'string',
+          description:
+            '取单套风格的完整定义（配色锚点 / 字体 / 字号 / anti-pattern / 色彩论证 / 写法要求）。' +
+            '填风格 id 或中文别名（如 "bento"、"大字报风格"）。给了本参数就只返回这一套的详情。',
         },
       },
       output: {
@@ -87,9 +114,19 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
       },
       isConcurrencySafe: () => true,
       async execute(args, exec) {
-        const section = args.section === 'all' ? undefined : args.section
         refreshTemplates(getSessionCwd(exec))
-        return { guide: designGuide(section) }
+        // 单套风格详情：最窄的查询，优先级高于 section
+        if (args.style) {
+          const hit = findStyle(args.style)
+          if (!hit) {
+            throw new Error(
+              `未知风格 "${args.style}"。可用 id：${styleIds().join(', ')}（中文别名亦可，如"大字报风格"）。`,
+            )
+          }
+          return { guide: styleDetail(hit), style: hit.id }
+        }
+        const section = args.section === 'all' ? undefined : args.section
+        return { guide: designGuide(section), style: '' }
       },
     }),
   )
@@ -104,7 +141,10 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
         '一步生成一份排版完整的 .pptx 演示文稿。你只需要提供内容（DeckSpec JSON），坐标、字号、配色、网格全部由插件内置的设计层计算，' +
         '无需自己指定位置。可选 template（咨询简报/产品发布/学术答辩/极简/政务报告/年度报告/科技青主题演讲/数据复盘/暖橙营销/教学课件/自然绿ESG/融资路演，' +
         '以及用户的自定义模板）一键获得专业感；theme 支持中文说法甚至主色 hex（"科技蓝"、"政务红"、"#0F5EA6"）；' +
-        '可选 style 注入整份样式（转场/背景/页码/元数据/配色/字体/字号缩放）。生成后用 office_screenshot 看效果并按自检清单修正。' +
+        '可选 style 注入整份样式：style.preset 选一套风格（17 套，见 office_design_guide 的 styles 节），' +
+        'style.colors/fonts/typography 再按需微调；' +
+        '不确定选哪套时，先用 office_deck_directions 出三个方向给用户看实物。' +
+        '生成后用 office_screenshot 看效果并按自检清单修正。' +
         '首次使用请先调用 office_design_guide 了解 DeckSpec 结构与字数红线。',
       parameters: {
         filename: { type: 'string', required: true, description: '输出文件名，必须以 .pptx 结尾（如 ai-intro.pptx）。支持中文名。' },
@@ -116,7 +156,8 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
             'layout 取值：基础版式 cover/section/bullets/cards/kpi/steps/compare/timeline/quote/table/agenda/swot/pricing/roadmap/ending；' +
             '元素型版式 chart（原生图表+洞察）/image-split（一栏大图+一栏文字）/image-full（全幅底图+骑线文字）/diagram（mermaid 图示）。' +
             '每页还可带 notes（演讲者备注）与 animate（入场动画）。' +
-            'theme 可直接写用户的话（"科技蓝风格"）或主色（"#0F5EA6"）；style.colors/fonts/typography 用于微调配色、字体与字号。详见 office_design_guide。',
+            'theme 可直接写用户的话（"科技蓝风格"）或主色（"#0F5EA6"）；style.preset 指定风格（如 "bento"、"编辑部"），' +
+            'style.colors/fonts/typography 用于微调配色、字体与字号，style.colorRationale 写一句「为什么是这组色」。详见 office_design_guide。',
           additionalProperties: true,
         },
         overwrite: { type: 'boolean', description: '文件已存在时是否覆盖，默认 false' },
@@ -132,6 +173,9 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
             path: string
             template?: string
             theme: string
+            preset?: string
+            presetMissed?: string
+            colorRationale?: string
             note?: string
             elements?: Record<string, number>
             lint?: string
@@ -144,7 +188,9 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
           return textCard(
             `已生成 ${v.filename}：${v.pageCount} 页 / ${v.shapeCount} 个形状`,
             `模板: ${v.template ?? '（未指定，基础样式）'}  配色: ${v.theme}`,
+            ...(v.preset ? [`风格: ${v.preset}${v.presetMissed ? `  ⚠️ 未识别的 preset "${v.presetMissed}"，已回退到模板自带样式` : ''}`] : []),
             ...(v.note ? [v.note] : []),
+            ...(v.colorRationale ? [`配色论证: ${v.colorRationale}`] : []),
             ...(elLine ? [`原生元素: ${elLine}`] : []),
             `版式: ${v.layouts.join(' → ')}`,
             `路径: ${v.path}`,
@@ -228,6 +274,9 @@ export function registerDeckTools(ctx: Context, deps: PluginDeps): void {
           path: abs,
           theme: compiled.theme.id,
           template: compiled.template ?? '',
+          preset: compiled.preset ?? '',
+          presetMissed: compiled.presetMissed ?? '',
+          colorRationale: compiled.theme.colorRationale ?? '',
           // 元素用量回执：让模型知道这版到底用了哪些原生元素
           elements: elementCounts,
           // 体检建议（错误级已在生成前拦下）
