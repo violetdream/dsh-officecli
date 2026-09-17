@@ -1,6 +1,6 @@
 {
   "name": "dsh-officecli",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "DeepSeek Harness plugin: operate Office documents via officecli CLI, with live sidebar preview",
   "license": "MIT",
   "keywords": [
