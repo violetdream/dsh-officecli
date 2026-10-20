@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { defineTool, type JsonValue, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { mkdirSync, readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import type { ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'

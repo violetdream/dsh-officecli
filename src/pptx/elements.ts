@@ -206,6 +206,11 @@ export interface PictureElement extends Box {
   cornerRadius?: number
   /** 整体不透明度 0–1。 */
   opacity?: number
+  /**
+   * cover 裁切 `left,top,right,bottom`（百分比）。
+   * 用于必须填满的图槽（如整幅底图）：框比原图更扁/更窄时裁掉多余边，避免拉伸。
+   */
+  crop?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -440,6 +445,7 @@ export function elementCommands(
       }
       if (el.name) props.name = el.name
       if (el.line) props.line = el.line
+      if (el.crop) props.crop = el.crop
       if (el.cornerRadius !== undefined) props.cornerRadius = pt(el.cornerRadius)
       if (el.opacity !== undefined) props.opacity = String(el.opacity)
       return [{ command: 'add', path: slide, type: 'picture', props }]
@@ -486,6 +492,10 @@ export function elementCommands(
         y: pt(el.y),
         width: pt(el.w),
         height: pt(el.h),
+        // native：内置合成器产出可编辑的原生形状（group）。
+        // auto 会优先用无头浏览器渲染成 PNG —— 不可编辑、文字无法按主题改色，
+        // 后处理（fixDiagramInk）也失去作用对象，所以这里显式钉住 native。
+        render: 'native',
       }
       return [{ command: 'add', path: slide, type: 'diagram', props }]
     }

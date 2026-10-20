@@ -6,6 +6,7 @@ import { contentDecorShapes, formatPageNumber } from './templates.js'
 import type { ShapeOp } from './shape.js'
 import { TEXT_MARGIN, bgShape, fitSize, pageFooter, pageTitle, roundRectAdj, textHeight } from './shape.js'
 import type { ChartData, DeckElement } from './elements.js'
+import { containBox, coverCrop, imageSize } from './img.js'
 
 /**
  * 版式模板层。
@@ -1731,10 +1732,9 @@ function chart(s: Extract<SlideSpec, { layout: 'chart' }>, t: Theme, p: string):
 /**
  * 图文页：一栏大图（officecli 原生 picture）+ 一栏文字。
  *
- * 图片不做裁切（officecli 的 picture 没有 objectFit），**原图宽高比必须接近
- * 图槽比例**，否则会拉伸：
- *   - 无图注：516 × 372 pt ≈ 1.39 : 1（接近 7:5）
- *   - 有图注：516 × 350 pt ≈ 1.47 : 1（接近 3:2）
+ * officecli 的 picture 没有 objectFit，框与原图比例不一致就会拉伸。插件在
+ * 编译期读原图像素尺寸，把框收敛成原图比例并居中（等于 `object-fit: contain`），
+ * 所以任何比例的图都不会变形；图槽剩余空间由背景色填充，描边跟着图走。
  * 图注占用的空间是从图槽里让出来的，不是叠在图上——所以有图注时图会略矮一点。
  */
 function imageSplit(s: Extract<SlideSpec, { layout: 'image-split' }>, t: Theme, p: string): LayoutResult {
@@ -1747,17 +1747,22 @@ function imageSplit(s: Extract<SlideSpec, { layout: 'image-split' }>, t: Theme, 
 
   // 图注从 B 区底部让位，避免与 C 区页脚相撞
   const capH = s.image.caption ? textHeight(s.image.caption, 10, imgW) : 0
-  const h = BODY.bottom - BODY.top - (capH ? capH + 8 : 0)
+  const slotH = BODY.bottom - BODY.top - (capH ? capH + 8 : 0)
+  // officecli 的 picture 不做等比缩放：框与原图比例不一致会拉伸（1.0.158 起报 P1）。
+  // 读一次原图像素尺寸，把框收敛成原图比例并居中 —— 等于 object-fit: contain。
+  const box = containBox({ x: imgX, y: top, w: imgW, h: slotH }, imageSize(s.image.src))
+  // 右栏文案与图注仍按图槽高度排版（图片收敛后只影响图本身，不挤压文字）
+  const h = slotH
 
   const shapes: ShapeOp[] = [bgShape(`${p}-bg`, t.bg), ...pageTitle(p, s.title, t)]
 
   // 图片外描边：浅色图上用极淡的边框界定边界，避免白底图「飘」在背景里
   shapes.push({
     name: `${p}-imgframe`,
-    x: imgX,
-    y: top,
-    w: imgW,
-    h,
+    x: box.x,
+    y: box.y,
+    w: box.w,
+    h: box.h,
     geometry: 'roundRect',
     adj: roundRectAdj(2000),
     fill: 'transparent',
@@ -1765,7 +1770,7 @@ function imageSplit(s: Extract<SlideSpec, { layout: 'image-split' }>, t: Theme, 
   })
 
   const elements: DeckElement[] = [
-    { kind: 'picture', name: `${p}-img`, src: s.image.src, x: imgX, y: top, w: imgW, h },
+    { kind: 'picture', name: `${p}-img`, src: s.image.src, x: box.x, y: box.y, w: box.w, h: box.h },
   ]
 
   const pad = 4
@@ -1932,7 +1937,17 @@ function imageFull(s: Extract<SlideSpec, { layout: 'image-full' }>, t: Theme, p:
   }
 
   const elements: DeckElement[] = [
-    { kind: 'picture', name: `${p}-bgimg`, src: s.image.src, x: 0, y: 0, w: CANVAS_W, h: CANVAS_H },
+    {
+      kind: 'picture',
+      name: `${p}-bgimg`,
+      src: s.image.src,
+      x: 0,
+      y: 0,
+      w: CANVAS_W,
+      h: CANVAS_H,
+      // 整幅底图必须铺满画布：按画布比例做 cover 裁切，避免非 16:9 原图被压扁
+      crop: coverCrop({ w: CANVAS_W, h: CANVAS_H }, imageSize(s.image.src)),
+    },
   ]
 
   return { shapes, elements, elementsBehind: true }

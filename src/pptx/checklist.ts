@@ -132,7 +132,8 @@ export const ELEMENT_GUIDE = `【元素能力】officecli 原生支持下列元�
 
 注意事项：
   · 图片用本地路径（绝对路径或相对当前工作目录），**不支持 http URL**
-  · officecli 的 picture 不做裁切，原图比例要与图槽一致，否则会拉伸
+  · officecli 的 picture 不做等比缩放：插件会读原图像素尺寸自动处理 ——
+    图槽（image-split）按原图比例收敛并居中，整幅底图（image-full）按画布比例 cover 裁切
   · 动画不能挂在图片或图示上（officecli 只允许顶层 shape / chart 挂动画），
     插件会自动选本页的图表或标题作为动画目标
   · 演讲者备注与动画都是「可选但强烈建议」的——notes 让稿子能直接拿去讲`

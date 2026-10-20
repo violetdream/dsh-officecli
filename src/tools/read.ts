@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { JsonValue } from '@deepseek-ai/dsh-tools'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { cliError, getSessionCwd, getSessionId, requireFile, textCard, truncate } from './common.js'
 import type { PluginDeps } from '../routes.js'
 

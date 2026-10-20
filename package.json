@@ -1,6 +1,6 @@
 {
   "name": "dsh-officecli",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "DeepSeek Harness plugin: operate Office documents via officecli CLI, with live sidebar preview",
   "license": "MIT",
   "keywords": [
@@ -37,6 +37,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "install:deps": "pnpm install --config.node-linker=hoisted",
     "build": "tsc && node client.build.mjs",
     "build:host": "tsc",
     "build:client": "node client.build.mjs",
@@ -47,28 +48,33 @@
     "client": {
       "platform": "web",
       "inject": [
-        "slots",
-        "sessions"
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-ui-sidebar"
       ]
     },
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
   },
+  "engines": {
+    "dsh": ">=0.2.1-rc.2 <0.3.0-0"
+  },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.8",
-    "@deepseek-ai/dsh-tools": "^0.1.0-rc.8",
-    "@deepseek-ai/schemastery": "^3.18.1"
+    "@deepseek-ai/cordis": "^4.0.5",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.2.1-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.5"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.1",
-    "@deepseek-ai/dsh-client-runtime": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-ui-primitives": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-host-webserver": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-tools": "0.1.0-rc.8",
-    "@deepseek-ai/schemastery": "3.18.1",
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-api-session-controller": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-util-values": "0.2.1-rc.2",
+    "@deepseek-ai/schemastery": "3.18.5",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
